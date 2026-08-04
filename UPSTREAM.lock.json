@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "repository": "https://github.com/tarikbc/hotspot-arcade",
-  "commit": "ea2a77cb7b68fd3b981afdd9f91a64180e1e8b17",
-  "describe": "ea2a77c",
-  "sourceTreeSha256": "4b4ac7283aea860411283b2fcb52e009b79670b35d2f00fe254bee5b33f3126d",
+  "commit": "4204458b5231a4e5514aae271eeee2f6ab456672",
+  "describe": "v1.6.0-6-g4204458",
+  "sourceTreeSha256": "aff7e366adf91a88e4353bb4c3a445db4ce902e11c1e83bbd3f1c1fb7ee961db",
   "files": [
     {
       "path": "vendor/engine/ha_games.h",
-      "sha256": "ee4f9081fc0cd9b8140a243f55a60f25f616fdd45fa122a30621ebca8b64cafb",
-      "size": 211554
+      "sha256": "71bc71c0df62c15cadbae58ae3a15862a364c764315aa4248338db0e21ad04e2",
+      "size": 211716
     },
     {
       "path": "vendor/engine/ha_json.h",
