@@ -154,23 +154,65 @@ try {
     copyFile(inside(webSource, join(webSource, entry.file), `web asset ${entry.file}`), join(webDestination, entry.file));
   }
 
-  // Packs: unknown directories/files are provenance failures rather than content
-  // silently omitted from the device.
+  // Packs: normalize the upstream layout (English files at the game root,
+  // translations in game/<lang>/) into vendor/packs/<lang>/<game>/. This makes
+  // every selected locale explicit in the reviewed content manifest and prevents
+  // a newly added translation directory from being silently omitted.
   const contentContract = readJson(join(root, 'tools', 'content-manifest.json'));
   const allowedPackDirectories = new Set(contentContract.games.filter((game) => game.packDirectory).map((game) => game.packDirectory));
+  const languageCodes = contentContract.languages.map((language) => language.code);
+  assert(languageCodes.length > 0 && languageCodes[0] === 'en' && new Set(languageCodes).size === languageCodes.length,
+    'content manifest languages must be unique and begin with en');
+  for (const language of contentContract.languages) {
+    assert(/^[a-z]{2}(?:-[a-z]{2})?$/.test(language.code), `unsafe language code ${language.code}`);
+    assert(language.root === `vendor/packs/${language.code}`,
+      `language ${language.code} must use vendor/packs/${language.code}`);
+  }
   const packsSource = join(extracted, 'packs');
   const packEntries = readdirSync(packsSource, { withFileTypes: true });
   for (const entry of packEntries) {
+    if (entry.isFile() && entry.name === 'README.md') continue;
     assert(entry.isDirectory() && allowedPackDirectories.has(entry.name), `unknown upstream pack entry ${entry.name}`);
-    for (const file of readdirSync(join(packsSource, entry.name), { withFileTypes: true })) {
-      assert(file.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$/i.test(file.name),
-        `unsafe upstream pack entry ${entry.name}/${file.name}`);
-    }
   }
   for (const directory of allowedPackDirectories) {
     assert(packEntries.some((entry) => entry.name === directory), `upstream is missing pack directory ${directory}`);
   }
-  cpSync(packsSource, join(stagedVendor, 'packs'), { recursive: true, errorOnExist: true });
+  const packsDestination = join(stagedVendor, 'packs');
+  mkdirSync(packsDestination);
+  for (const directory of [...allowedPackDirectories].sort()) {
+    const gameSource = join(packsSource, directory);
+    const entries = readdirSync(gameSource, { withFileTypes: true });
+    const translationDirectories = new Map();
+    const englishFiles = [];
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name === 'README.md') continue;
+      if (entry.isFile()) {
+        assert(/^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$/i.test(entry.name),
+          `unsafe upstream pack entry ${directory}/${entry.name}`);
+        englishFiles.push(entry.name);
+        continue;
+      }
+      assert(entry.isDirectory() && languageCodes.includes(entry.name) && entry.name !== 'en',
+        `unknown upstream pack entry ${directory}/${entry.name}`);
+      translationDirectories.set(entry.name, join(gameSource, entry.name));
+    }
+    assert(englishFiles.length > 0, `upstream pack directory ${directory} has no English packs`);
+    for (const language of languageCodes) {
+      const sourceDirectory = language === 'en' ? gameSource : translationDirectories.get(language);
+      assert(sourceDirectory, `upstream is missing ${directory}/${language}`);
+      const files = language === 'en' ? englishFiles : readdirSync(sourceDirectory, { withFileTypes: true }).map((entry) => {
+        assert(entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$/i.test(entry.name),
+          `unsafe upstream pack entry ${directory}/${language}/${entry.name}`);
+        return entry.name;
+      });
+      assert(files.length > 0, `upstream pack directory ${directory}/${language} is empty`);
+      const destination = join(packsDestination, language, directory);
+      mkdirSync(destination, { recursive: true });
+      for (const file of files.sort()) copyFile(join(sourceDirectory, file), join(destination, file));
+    }
+    const unknownTranslations = [...translationDirectories.keys()].filter((language) => !languageCodes.includes(language));
+    assert(!unknownTranslations.length, `unreviewed translations in ${directory}: ${unknownTranslations.join(', ')}`);
+  }
 
   const libsSource = join(extracted, 'esp32', 'libs');
   assert(existsSync(libsSource) && statSync(libsSource).isDirectory(), 'upstream esp32/libs is missing');

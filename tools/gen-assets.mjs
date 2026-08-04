@@ -84,7 +84,7 @@ assert(Array.isArray(content.games) && content.games.length > 0, 'content manife
 const languageCodes = new Set();
 for (const [index, language] of content.languages.entries()) {
   assertKeys(language, ['code', 'label', 'root'], `language ${index}`);
-  assert(typeof language.code === 'string' && /^[a-z]{2}(?:-[A-Z]{2})?$/.test(language.code), `language ${index} code is invalid`);
+  assert(typeof language.code === 'string' && /^[a-z]{2}(?:-[a-z]{2})?$/.test(language.code), `language ${index} code is invalid`);
   assert(!languageCodes.has(language.code), `duplicate language code ${language.code}`);
   languageCodes.add(language.code);
   assert(typeof language.label === 'string' && language.label.length > 0 && byteLength(language.label) <= 48,

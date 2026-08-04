@@ -66,7 +66,13 @@ test('sync copies only the exact commit and records a complete deterministic loc
       spectrum: 'Pack: Test\nLeft: A\nRight: B\n',
       kmk: 'Pack: Test\nName: Ada\n',
     };
-    for (const [directory, text] of Object.entries(packShapes)) put(join(upstream, 'packs', directory, 'test.txt'), text);
+    put(join(upstream, 'packs', 'README.md'), '# Pack format\n');
+    for (const [directory, text] of Object.entries(packShapes)) {
+      put(join(upstream, 'packs', directory, 'test.txt'), text);
+      put(join(upstream, 'packs', directory, 'de', 'test.txt'), text);
+      put(join(upstream, 'packs', directory, 'pt-br', 'test.txt'), text);
+    }
+    put(join(upstream, 'packs', 'spectrum', 'README.md'), '# Spectrum notes\n');
     put(join(upstream, 'esp32', 'libs', 'Example', '.gitignore'), 'build\n');
     put(join(upstream, 'esp32', 'libs', 'Example', 'LICENSE'), 'test license\n');
     const commit = commitAll(upstream, 'fixture upstream');
@@ -102,6 +108,13 @@ test('sync copies only the exact commit and records a complete deterministic loc
     for (const directory of ['engine', 'web', 'packs', 'libs']) {
       assert.equal(existsSync(join(downstream, 'vendor', directory, 'obsolete.txt')), false, `${directory} was not fully replaced`);
     }
+    for (const language of ['en', 'de', 'pt-br']) {
+      assert.equal(
+        readFileSync(join(downstream, 'vendor', 'packs', language, 'draw', 'test.txt'), 'utf8'),
+        packShapes.draw,
+      );
+    }
+    assert.equal(existsSync(join(downstream, 'vendor', 'packs', 'README.md')), false);
     const lock = JSON.parse(readFileSync(join(downstream, 'UPSTREAM.lock.json'), 'utf8'));
     assert.equal(lock.repository, 'https://github.com/tarikbc/hotspot-arcade');
     assert.equal(lock.commit, commit);
