@@ -1,23 +1,23 @@
 # Upstream
 
-Everything under `vendor/` is copied verbatim from
-[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT,
-Tarik Caramanico). Nothing in `vendor/` is edited here -- see README.
+Everything under `vendor/` is copied from one committed Git object in
+[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT, Tarik Caramanico). Third-party libraries retain their own license files. No file in `vendor/` is edited downstream.
 
 | | |
 | --- | --- |
-| commit | `25ad21523c9a66eb712911545792ee8ebf6281ad` |
-| describe | `v1.6.0-3-g25ad215` |
-| engine | `vendor/engine/` -- ha_proto.h, ha_json.h, ha_games.h |
-| web bundle | `vendor/web/` -- 1 file(s) |
-| content packs | `vendor/packs/` -- 32 pack(s) |
-| async libs | `vendor/libs/` -- AsyncTCP, ESPAsyncWebServer (third-party, own LICENSE files) |
+| repository | `https://github.com/tarikbc/hotspot-arcade` |
+| commit | `ea2a77cb7b68fd3b981afdd9f91a64180e1e8b17` |
+| describe | `ea2a77c` |
+| source tree SHA-256 | `4b4ac7283aea860411283b2fcb52e009b79670b35d2f00fe254bee5b33f3126d` |
+| web bundle | 1 file(s) |
+| content packs | 70 pack(s) |
+| full file inventory | `UPSTREAM.lock.json` |
 
-Refresh with:
+Refresh from a clean upstream and downstream checkout:
 
 ```sh
-node tools/sync-upstream.mjs [path-to-upstream-clone]
+node tools/sync-upstream.mjs --repo ../hotspot-arcade --commit <40-character-sha>
 node tools/gen-assets.mjs
 ```
 
-`git diff vendor/` after a sync is exactly the upstream change.
+Review `git diff -- vendor UPSTREAM.md UPSTREAM.lock.json` before committing.

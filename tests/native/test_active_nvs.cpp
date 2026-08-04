@@ -131,6 +131,12 @@ static void testPayloadValidationAndCanonicalization() {
     bad = valid;
     bad.games[0].count = 0;
     assert(!haActiveNvsPayloadValid(bad));
+    bad = valid;
+    bad.activeGame = 250;
+    assert(!haActiveNvsPayloadValid(bad));
+    bad = valid;
+    bad.games[0].game = 250;
+    assert(!haActiveNvsPayloadValid(bad));
 
     // Unused caller bytes are not serialized: write canonicalization zeros them.
     valid.participantCount = 1;

@@ -35,6 +35,9 @@ struct HaConfigRuntime {
     HaConfigRecord value;
     int8_t sdSlot;
     bool begun;
+    bool sdDirty;
+    bool nvsDirty;
+    bool legacyRenamePending;
 };
 
 static HaConfigRuntime haConfigRt = {};
@@ -161,6 +164,11 @@ static bool haConfigValid(const HaConfigRecord& value) {
     return length > 0 && length <= 32 && length < sizeof(value.ssid) &&
            value.audio <= 2 && value.language < HA_GENERATED_LANGUAGE_COUNT &&
            haConfigValidUtf8(value.ssid);
+}
+
+static bool haConfigSame(const HaConfigRecord& left, const HaConfigRecord& right) {
+    return left.generation == right.generation && left.audio == right.audio &&
+           left.language == right.language && strcmp(left.ssid, right.ssid) == 0;
 }
 
 static bool haConfigReadSd(const char* path, HaConfigRecord& out) {
@@ -303,7 +311,9 @@ static bool haConfigWriteNvs(const HaConfigRecord& value) {
     if(!prefs.begin("ha_cfg2", false)) return false;
     bool ok = prefs.putBytes("record", &blob, sizeof(blob)) == sizeof(blob);
     prefs.end();
-    return ok;
+    if(!ok) return false;
+    HaConfigRecord verified = {};
+    return haConfigReadNvs(verified) && haConfigSame(verified, value);
 }
 
 static bool haConfigReadLegacy(HaConfigRecord& value) {
@@ -339,8 +349,11 @@ static bool haConfigReadLegacy(HaConfigRecord& value) {
 
 static bool haConfigCommit(HaConfigRecord next) {
     if(!haConfigValid(next)) return false;
-    next.generation = haConfigRt.value.generation == UINT32_MAX ? UINT32_MAX :
-                      haConfigRt.value.generation + 1;
+    // Reusing UINT32_MAX would create equal-generation conflicts that cannot be
+    // ordered after a torn cross-media update. Require an explicit reset/migration
+    // instead of pretending a saturated generation committed successfully.
+    if(haConfigRt.value.generation == UINT32_MAX) return false;
+    next.generation = haConfigRt.value.generation + 1;
     bool sdWritten = false;
     int8_t nextSlot = haConfigRt.sdSlot == 0 ? 1 : 0;
     if(haSdOk) {
@@ -352,7 +365,68 @@ static bool haConfigCommit(HaConfigRecord next) {
     if(!sdWritten && !nvsWritten) return false;
     haConfigRt.value = next;
     haConfigRt.begun = true;
+    // A successful medium establishes the new authoritative value. Keep retrying
+    // the other copy at the same generation so later SD removal/insertion cannot
+    // resurrect stale settings.
+    haConfigRt.sdDirty = !sdWritten;
+    haConfigRt.nvsDirty = !nvsWritten;
     return true;
+}
+
+static bool haConfigFilesEqual(const char* leftPath, const char* rightPath) {
+    if(!haSdOk || !SD.exists(leftPath) || !SD.exists(rightPath)) return false;
+    File left = SD.open(leftPath, FILE_READ);
+    File right = SD.open(rightPath, FILE_READ);
+    if(!left || !right || left.size() != right.size() || left.size() > HA_CONFIG_MAX_BYTES) {
+        if(left) left.close();
+        if(right) right.close();
+        return false;
+    }
+    bool equal = true;
+    while(left.available() || right.available()) {
+        if(left.read() != right.read()) { equal = false; break; }
+    }
+    left.close();
+    right.close();
+    return equal;
+}
+
+// Repair is idempotent and may be called from loop(). It never advances the
+// selected generation: this is a mirror repair, not a user-visible settings edit.
+static bool haConfigRepairMirrors() {
+    if(!haConfigRt.begun || !haConfigValid(haConfigRt.value)) return false;
+    bool ok = true;
+    if(haConfigRt.nvsDirty) {
+        if(haConfigWriteNvs(haConfigRt.value)) haConfigRt.nvsDirty = false;
+        else ok = false;
+    }
+    if(haConfigRt.sdDirty && haSdOk) {
+        int8_t target = haConfigRt.sdSlot == 0 ? 1 : 0;
+        const char* path = target == 0 ? HA_CONFIG_A : HA_CONFIG_B;
+        if(haConfigWriteSd(path, haConfigRt.value)) {
+            haConfigRt.sdSlot = target;
+            haConfigRt.sdDirty = false;
+        } else {
+            ok = false;
+        }
+    }
+    if(haConfigRt.legacyRenamePending && haSdOk) {
+        bool preserved = false;
+        if(!SD.exists(HA_CONFIG_V1)) {
+            preserved = SD.exists(HA_CONFIG_V1_IMPORTED);
+        } else if(SD.exists(HA_CONFIG_V1_IMPORTED)) {
+            // Never overwrite an earlier preserved original. Removing the source
+            // is safe only when it is byte-for-byte the already imported copy.
+            preserved = haConfigFilesEqual(HA_CONFIG_V1, HA_CONFIG_V1_IMPORTED) &&
+                        SD.remove(HA_CONFIG_V1);
+        } else {
+            preserved = SD.rename(HA_CONFIG_V1, HA_CONFIG_V1_IMPORTED) &&
+                        !SD.exists(HA_CONFIG_V1) && SD.exists(HA_CONFIG_V1_IMPORTED);
+        }
+        if(preserved) haConfigRt.legacyRenamePending = false;
+        else ok = false;
+    }
+    return ok;
 }
 
 static bool haConfigBegin(const char* defaultSsid, uint8_t defaultAudio, uint8_t defaultLanguage) {
@@ -370,17 +444,26 @@ static bool haConfigBegin(const char* defaultSsid, uint8_t defaultAudio, uint8_t
     else if(validB) { sd = b; haConfigRt.sdSlot = 1; validSd = true; }
     else haConfigRt.sdSlot = -1;
 
-    if(validSd && (!validNvs || sd.generation >= nvs.generation)) selected = sd;
+    bool selectedSd = validSd && (!validNvs || sd.generation >= nvs.generation);
+    if(selectedSd) selected = sd;
     else if(validNvs) selected = nvs;
 
     bool migrated = false;
     if(!validSd && !validNvs) migrated = haConfigReadLegacy(selected);
     haConfigRt.value = selected;
     haConfigRt.begun = true;
-    if(migrated && haConfigCommit(selected) && haSdOk) {
-        SD.remove(HA_CONFIG_V1_IMPORTED);
-        SD.rename(HA_CONFIG_V1, HA_CONFIG_V1_IMPORTED);
+    if(validSd || validNvs) {
+        haConfigRt.sdDirty = !validSd || (!selectedSd && !haConfigSame(sd, selected));
+        haConfigRt.nvsDirty = !validNvs || (selectedSd && !haConfigSame(nvs, selected));
+    } else {
+        // Persist validated defaults as well as legacy imports. A first boot must
+        // not remain recoverable only from compiled constants until a setting is
+        // manually changed.
+        if(!haConfigCommit(selected)) return false;
     }
+    haConfigRt.legacyRenamePending = haSdOk && SD.exists(HA_CONFIG_V1) &&
+                                      (migrated || validSd || validNvs);
+    (void)haConfigRepairMirrors();
     return haConfigValid(haConfigRt.value);
 }
 

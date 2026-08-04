@@ -46,41 +46,52 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py'
           node --test tests/*.test.mjs
           tools/test-native.sh
+          tools/test-native.sh --tsan
 
       - name: Bootstrap locked Arduino toolchain
         run: tools/bootstrap.sh
 
-      - name: Build twice, verify generated files, and compare hashes
+      - name: Expose locked esptool
         run: |
+          ESPTOOL_VERSION="$(node -p "require('./tools/toolchain.lock.json').hostTools.esptool.version")"
+          ESPTOOL_DIR="$PWD/.cache/arduino/data/packages/esp32/tools/esptool_py/$ESPTOOL_VERSION"
+          test -x "$ESPTOOL_DIR/esptool"
+          ESPTOOL_ACTUAL="$("$ESPTOOL_DIR/esptool" version | awk 'NR == 1 { sub(/^v/, "", $2); print $2 }')"
+          test "$ESPTOOL_ACTUAL" = "$ESPTOOL_VERSION"
+          printf '%s\n' "$ESPTOOL_DIR" >> "$GITHUB_PATH"
+
+      - name: Build two isolated release candidates and compare every hash
+        run: |
+          REPRO_WORKTREE="$RUNNER_TEMP/hotspot-repro-worktree"
+          REPRO_FIRST="$RUNNER_TEMP/hotspot-repro-first"
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           export SOURCE_DATE_EPOCH
           export ARDUINO_DIRECTORIES_DATA="$PWD/.cache/arduino/data"
           export ARDUINO_DIRECTORIES_DOWNLOADS="$PWD/.cache/arduino/downloads"
           export ARDUINO_DIRECTORIES_USER="$PWD/.cache/arduino/user"
-          node tools/gen-assets.mjs --check
-          tools/build.sh
-          node tools/gen-assets.mjs --check
-          mkdir -p "$RUNNER_TEMP/repro-first"
-          cp -- build/*.bin "$RUNNER_TEMP/repro-first/"
-          (cd "$RUNNER_TEMP/repro-first" && sha256sum ./*.bin) > "$RUNNER_TEMP/first.sha256"
-          tools/build.sh
-          node tools/gen-assets.mjs --check
-          (cd build && sha256sum ./*.bin) > "$RUNNER_TEMP/second.sha256"
+          ARDUINO_CLI="$(command -v arduino-cli)"
+          export ARDUINO_CLI
+          git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
+          "$REPRO_WORKTREE/tools/build-release-candidate.sh"
+          node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/first.sha256"
+          mkdir -p "$REPRO_FIRST"
+          cp -R "$REPRO_WORKTREE/build" "$REPRO_FIRST/build"
+          cp -R "$REPRO_WORKTREE/firmware" "$REPRO_FIRST/firmware"
+          git worktree remove --force "$REPRO_WORKTREE"
+          git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
+          "$REPRO_WORKTREE/tools/build-release-candidate.sh"
+          node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/second.sha256"
           diff -u "$RUNNER_TEMP/first.sha256" "$RUNNER_TEMP/second.sha256"
-          tools/package-m5burner.sh
-          node tools/generate-sbom.mjs build
-          node tools/package-release.mjs
-          (cd build && sha256sum --check SHA256SUMS)
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hotspot-arcade-cardputer
           if-no-files-found: error
           path: |
-            build/hotspot-arcade-cardputer.ino.bin
-            build/hotspot-arcade-cardputer.full.bin
-            build/hotspot-arcade-cardputer-m5burner.zip
-            build/hotspot-arcade-cardputer.spdx.json
-            build/build-manifest.json
-            build/SHA256SUMS
-            firmware/cardputer/
+            ${{ runner.temp }}/hotspot-repro-first/build/hotspot-arcade-cardputer.ino.bin
+            ${{ runner.temp }}/hotspot-repro-first/build/hotspot-arcade-cardputer.full.bin
+            ${{ runner.temp }}/hotspot-repro-first/build/hotspot-arcade-cardputer-m5burner.zip
+            ${{ runner.temp }}/hotspot-repro-first/build/hotspot-arcade-cardputer.spdx.json
+            ${{ runner.temp }}/hotspot-repro-first/build/build-manifest.json
+            ${{ runner.temp }}/hotspot-repro-first/build/SHA256SUMS
+            ${{ runner.temp }}/hotspot-repro-first/firmware/cardputer/

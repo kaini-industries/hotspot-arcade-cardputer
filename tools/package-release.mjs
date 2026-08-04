@@ -8,20 +8,19 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, wr
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import {
+  fileDigest,
+  readToolchainLock,
+  readUpstreamLock,
+  sourceDateEpoch,
+} from './release-provenance.mjs';
 import { CANONICAL_REPOSITORY, RELEASE_ARTIFACTS, validateRelease } from './validate-release.mjs';
+import { validateSbomDocument } from './validate-sbom.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FQBN = 'esp32:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB';
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
-
-function upstreamCommit() {
-  const upstream = readFileSync(join(root, 'UPSTREAM.md'), 'utf8');
-  const match = upstream.match(/\| commit \| `([0-9a-f]{40})` \|/);
-  if (!match) throw new Error('UPSTREAM.md does not contain a full 40-character commit');
-  return match[1];
 }
 
 function parseArgs(argv) {
@@ -47,6 +46,11 @@ function main() {
       requireArtifacts: true,
     });
     const artifactsDir = resolve(root, options.artifactsDir);
+    const upstream = readUpstreamLock(root);
+    const toolchain = readToolchainLock(root);
+    const epoch = sourceDateEpoch();
+    const sbomPath = join(artifactsDir, 'hotspot-arcade-cardputer.spdx.json');
+    validateSbomDocument(JSON.parse(readFileSync(sbomPath, 'utf8')), artifactsDir, root);
     const artifacts = RELEASE_ARTIFACTS.map((filename) => {
       const path = join(artifactsDir, filename);
       return { filename, bytes: statSync(path).size, sha256: sha256(path) };
@@ -59,10 +63,44 @@ function main() {
       repository: CANONICAL_REPOSITORY,
       commit: execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
       upstream: {
-        repository: 'https://github.com/tarikbc/hotspot-arcade',
-        commit: upstreamCommit(),
+        repository: upstream.repository,
+        commit: upstream.commit,
+        describe: upstream.describe,
+        sourceTreeSha256: upstream.sourceTreeSha256,
+        lockFile: 'UPSTREAM.lock.json',
       },
-      fqbn: FQBN,
+      sourceDateEpoch: epoch,
+      fqbn: toolchain.arduino.fqbn,
+      toolchain: {
+        lockFile: 'tools/toolchain.lock.json',
+        lockSha256: fileDigest(join(root, 'tools', 'toolchain.lock.json')),
+        node: toolchain.node.version,
+        arduinoCli: toolchain.arduino.cliVersion,
+        esp32Core: toolchain.arduino.core.version,
+        esptool: toolchain.hostTools.esptool.version,
+      },
+      installLayouts: {
+        app: {
+          filename: 'hotspot-arcade-cardputer.ino.bin',
+          target: 'M5Launcher',
+          flashOffset: '0x170000',
+        },
+        full: {
+          filename: 'hotspot-arcade-cardputer.full.bin',
+          target: 'ESP32-S3 flash',
+          flashOffset: '0x0',
+          flashSizeBytes: 0x800000,
+        },
+        m5burner: {
+          filename: 'hotspot-arcade-cardputer-m5burner.zip',
+          components: [
+            { filename: 'bootloader_0x0.bin', flashOffset: '0x0' },
+            { filename: 'partitions_0x8000.bin', flashOffset: '0x8000' },
+            { filename: 'boot_app0_0xe000.bin', flashOffset: '0xe000' },
+            { filename: 'hotspot-arcade_0x10000.bin', flashOffset: '0x10000' },
+          ],
+        },
+      },
       artifacts,
     };
 
@@ -70,39 +108,42 @@ function main() {
     const staged = mkdtempSync(join(artifactsDir, '.release-metadata-'));
     const stagedManifest = join(staged, 'build-manifest.json');
     const stagedChecksums = join(staged, 'SHA256SUMS');
-    writeFileSync(stagedManifest, manifestText);
-    const checksummed = [
-      ...artifacts,
-      {
-        filename: basename(stagedManifest),
-        bytes: statSync(stagedManifest).size,
-        sha256: sha256(stagedManifest),
-      },
-    ].sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0));
-    const checksumText = checksummed.map((item) => `${item.sha256}  ${item.filename}`).join('\n') + '\n';
-    writeFileSync(stagedChecksums, checksumText);
-
-    const targets = [
-      [stagedManifest, join(artifactsDir, 'build-manifest.json'), join(staged, 'build-manifest.previous')],
-      [stagedChecksums, join(artifactsDir, 'SHA256SUMS'), join(staged, 'SHA256SUMS.previous')],
-    ];
-    const backedUp = [];
-    const installed = [];
+    let checksummed;
     try {
-      for (const [, target, backup] of targets) {
-        if (existsSync(target)) {
-          renameSync(target, backup);
-          backedUp.push([backup, target]);
+      writeFileSync(stagedManifest, manifestText);
+      checksummed = [
+        ...artifacts,
+        {
+          filename: basename(stagedManifest),
+          bytes: statSync(stagedManifest).size,
+          sha256: sha256(stagedManifest),
+        },
+      ].sort((a, b) => (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0));
+      const checksumText = checksummed.map((item) => `${item.sha256}  ${item.filename}`).join('\n') + '\n';
+      writeFileSync(stagedChecksums, checksumText);
+
+      const targets = [
+        [stagedManifest, join(artifactsDir, 'build-manifest.json'), join(staged, 'build-manifest.previous')],
+        [stagedChecksums, join(artifactsDir, 'SHA256SUMS'), join(staged, 'SHA256SUMS.previous')],
+      ];
+      const backedUp = [];
+      const installed = [];
+      try {
+        for (const [, target, backup] of targets) {
+          if (existsSync(target)) {
+            renameSync(target, backup);
+            backedUp.push([backup, target]);
+          }
         }
+        for (const [source, target] of targets) {
+          renameSync(source, target);
+          installed.push(target);
+        }
+      } catch (error) {
+        for (const target of installed) if (existsSync(target)) rmSync(target, { force: true });
+        for (const [backup, target] of backedUp) if (existsSync(backup)) renameSync(backup, target);
+        throw error;
       }
-      for (const [source, target] of targets) {
-        renameSync(source, target);
-        installed.push(target);
-      }
-    } catch (error) {
-      for (const target of installed) if (existsSync(target)) rmSync(target, { force: true });
-      for (const [backup, target] of backedUp) if (existsSync(backup)) renameSync(backup, target);
-      throw error;
     } finally {
       rmSync(staged, { recursive: true, force: true });
     }

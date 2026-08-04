@@ -32,7 +32,7 @@ static void haTrimTo(const char* s, const char* e, String& out, bool lower = fal
     }
 }
 
-static uint16_t haContentLoadPack(
+static uint32_t haContentLoadPack(
     Engine& engine,
     uint8_t game,
     const char* text,
@@ -57,7 +57,7 @@ static uint16_t haContentLoadPack(
     String obj = "{";
     String key, val;
     bool any = false;
-    uint16_t itemCount = 0;
+    uint32_t itemCount = 0;
     for(const char* p = text; p && *p;) {
         const char* eol = strchr(p, '\n');
         if(!eol) eol = p + strlen(p);
@@ -72,7 +72,7 @@ static uint16_t haContentLoadPack(
             if(any) {
                 obj += "}";
                 engine.contentItem(obj.c_str());
-                if(itemCount != UINT16_MAX) itemCount++;
+                if(itemCount != UINT32_MAX) itemCount++;
             }
             obj = "{";
             any = false;
@@ -97,7 +97,7 @@ static uint16_t haContentLoadPack(
     if(any) { // a file that ends without a trailing separator
         obj += "}";
         engine.contentItem(obj.c_str());
-        if(itemCount != UINT16_MAX) itemCount++;
+        if(itemCount != UINT32_MAX) itemCount++;
     }
     return itemCount;
 }
@@ -112,9 +112,13 @@ static uint16_t haContentLoadPack(
 // the rest stay English. Called at boot and again whenever Settings changes language.
 static bool haContentLoadAll(Engine& engine, const char* lang) {
     engine.contentClear();
+    if(!lang) {
+        engine.contentAbort();
+        return false;
+    }
     bool hasLang[64] = {false}; // game id -> does the selected language cover it?
-    uint16_t packCount = 0;
-    uint16_t itemCount = 0;
+    uint32_t packCount = 0;
+    uint32_t itemCount = 0;
     for(size_t i = 0; i < HA_BAKED_PACK_COUNT; i++) {
         const HaBakedPack& bp = HA_BAKED_PACKS[i];
         if(bp.game < 64 && strcmp(bp.lang, lang) == 0) hasLang[bp.game] = true;
@@ -123,20 +127,27 @@ static bool haContentLoadAll(Engine& engine, const char* lang) {
         const HaBakedPack& bp = HA_BAKED_PACKS[i];
         const char* want = (bp.game < 64 && hasLang[bp.game]) ? lang : "en";
         if(strcmp(bp.lang, want) != 0) continue;
-        if(packCount != UINT16_MAX) packCount++;
-        uint16_t loaded = haContentLoadPack(engine, bp.game, bp.text, bp.fallback);
-        if((uint32_t)itemCount + loaded > UINT16_MAX) itemCount = UINT16_MAX;
-        else itemCount = (uint16_t)(itemCount + loaded);
+        if(packCount == UINT32_MAX) {
+            engine.contentAbort();
+            return false;
+        }
+        packCount++;
+        uint32_t loaded = haContentLoadPack(engine, bp.game, bp.text, bp.fallback);
+        if(loaded == UINT32_MAX || itemCount > UINT32_MAX - loaded) {
+            engine.contentAbort();
+            return false;
+        }
+        itemCount += loaded;
     }
-    // Protocol v18 stages both content and locale until the checked commit. Older
-    // engines load directly, so the same call remains source-compatible while the
-    // reviewed upstream is being synchronized.
+    // 0xFFFF is the engine API's "unchecked" sentinel, so an exact transaction
+    // must never silently saturate into it. The generated bundle is far smaller,
+    // but keep this boundary explicit if its schema grows.
+    if(!packCount || packCount >= UINT16_MAX || itemCount >= UINT16_MAX) {
+        engine.contentAbort();
+        return false;
+    }
     engine.setLang(lang);
-#if HA_FW_VERSION >= 18
-    return engine.contentCommit(packCount, itemCount);
-#else
-    (void)packCount;
-    (void)itemCount;
-    return true;
-#endif
+    bool committed = engine.contentCommit((uint16_t)packCount, (uint16_t)itemCount);
+    if(!committed) engine.contentAbort(); // idempotent after commit's checked abort path
+    return committed;
 }

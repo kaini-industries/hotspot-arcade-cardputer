@@ -35,6 +35,16 @@ public:
         storage[current][key] = std::vector<uint8_t>(first, first + length);
         return length;
     }
+    uint32_t getUInt(const char* key, uint32_t fallback = 0) const {
+        uint32_t value = fallback;
+        return getBytesLength(key) == sizeof(value) &&
+                       getBytes(key, &value, sizeof(value)) == sizeof(value)
+                   ? value
+                   : fallback;
+    }
+    size_t putUInt(const char* key, uint32_t value) {
+        return putBytes(key, &value, sizeof(value));
+    }
     bool clear() {
         if(!open || readonly || failWrites) return false;
         storage[current].clear();

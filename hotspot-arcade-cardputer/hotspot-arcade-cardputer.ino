@@ -20,9 +20,20 @@
 #include <DNSServer.h>
 #include <esp_wifi.h>
 #include <esp_ota_ops.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <SD.h>
 #include <SPI.h>
 #include <M5Cardputer.h>
+
+// Cardputer capacity is bounded by the softAP's ten associated stations. Keep
+// the engine's fixed-size state proportional to that hardware limit while still
+// allowing every connected player to be placed in a concurrent matchup.
+#define HA_MAX_PLAYERS 10
+#define DUEL_MAX_MATCHES 5
+#define PONG_MAX 5
+#define BATTLE_MAX 5
+#define CHESS_MAX 5
 
 #include "ha_proto.h"
 #include "ha_json.h"
@@ -33,6 +44,11 @@
 #include "ha_active_nvs.h"
 #include "ha_config.h"
 #include "ha_content.h"
+#include "ha_async_queue.h"
+#include "ha_diagnostics.h"
+#include "ha_event_format.h"
+#include "ha_network_policy.h"
+#include "ha_runtime_types.h"
 #include "ha_ui.h"
 
 #define WS_MSG_MAX 512
@@ -50,27 +66,56 @@ uint8_t haLang = 0;
 bool haLangDirty = false;
 static uint8_t haLoadedLang = 0;
 
-static void haBeep(uint16_t freq, uint16_t ms) {
+enum HaSoundRequest : uint8_t {
+    HaSoundApUp = 1,
+    HaSoundJoin = 2,
+    HaSoundLeave = 3,
+};
+static HaAsyncQueue<HaSoundRequest, 8> haSoundQueue;
+
+static void haPlaySound(uint16_t freq, uint16_t ms) {
     if(haAudioLevel == 0) return;
     M5Cardputer.Speaker.setVolume(haAudioLevel == 2 ? 200 : 80);
     M5Cardputer.Speaker.tone(freq, ms);
 }
-// Single notes: consecutive tone() calls replace each other rather than queue, and
-// the join/leave sinks run on the async task where a blocking delay is unwelcome.
-static void haJingleUp() { haBeep(1319, 160); }   // AP came up: clear high note
-static void haJingleJoin() { haBeep(1568, 90); }  // a phone joined: bright blip up
-static void haJingleLeave() { haBeep(523, 130); } // a phone left: low blip
+// Async engine sinks enqueue sound intents only. The loop task owns all speaker I/O.
+static void haJingleUp() { (void)haSoundQueue.push(HaSoundApUp); }
+static void haJingleJoin() { (void)haSoundQueue.push(HaSoundJoin); }
+static void haJingleLeave() { (void)haSoundQueue.push(HaSoundLeave); }
+static void haSoundPump() {
+    HaSoundRequest request;
+    if(!haSoundQueue.pop(request)) return; // at most one note per loop tick
+    if(request == HaSoundApUp) haPlaySound(1319, 160);
+    else if(request == HaSoundJoin) haPlaySound(1568, 90);
+    else if(request == HaSoundLeave) haPlaySound(523, 130);
+}
 
 static DNSServer dnsServer;
 static AsyncWebServer server(80);
 static AsyncWebSocket ws("/ws");
 static IPAddress apIP(192, 168, 4, 1);
+static HaSocketTable haSockets = {};
+static HaDiagnostics haDiagnostics = {};
+
+static HaWsFlowState haWsFlow[HA_WS_OBJECT_LIMIT];
 // A game-pad emoji in the default SSID makes the network jump out in a phone's Wi-Fi
 // list. SSIDs are UTF-8 up to 32 bytes; the emoji is 4, so this fits with room to
 // spare. (The host's own screen font has no emoji glyph, so it shows a placeholder
 // there -- cosmetic; the phones that matter render it fine.)
 static char apName[33] = "\xF0\x9F\x8E\xAE Hotspot Arcade";
+static char joinCode[7] = ""; // generated once per boot; never persisted or sent to phones
 static bool portalRunning = false;
+
+enum HaApState : uint8_t {
+    HaApBooting = 0,
+    HaApRunning = 1,
+    HaApManualOff = 2,
+    HaApReconnectWait = 3,
+};
+static HaApState haApState = HaApBooting;
+static uint8_t haApRequiredPlayers = 0;
+static uint32_t haApReconnectStartedMs = 0;
+#define HA_AP_RECONNECT_WINDOW_MS 600000UL
 
 static Engine engine;
 
@@ -79,20 +124,46 @@ static Engine engine;
 // firmware. The host mirror is written only from inside sinks, which are only ever
 // reached from an engine call, so this one lock covers both.
 static SemaphoreHandle_t engineMutex = nullptr;
-#define ENGINE_LOCK() xSemaphoreTakeRecursive(engineMutex, portMAX_DELAY)
-#define ENGINE_UNLOCK() xSemaphoreGiveRecursive(engineMutex)
+static uint16_t haEngineLockDepth = 0;
+static uint32_t haEngineLockStartedUs = 0;
+#define ENGINE_LOCK()                                                        \
+    do {                                                                     \
+        BaseType_t haLockResult =                                            \
+            xSemaphoreTakeRecursive(engineMutex, portMAX_DELAY);             \
+        configASSERT(haLockResult == pdTRUE);                                \
+        (void)haLockResult;                                                  \
+        if(haEngineLockDepth++ == 0) haEngineLockStartedUs = micros();        \
+    } while(0)
+#define ENGINE_UNLOCK()                                                      \
+    do {                                                                     \
+        configASSERT(haEngineLockDepth > 0);                                 \
+        if(--haEngineLockDepth == 0) {                                       \
+            uint32_t haHeldUs = micros() - haEngineLockStartedUs;            \
+            if(haHeldUs > haDiagnostics.maxEngineLockUs)                     \
+                haDiagnostics.maxEngineLockUs = haHeldUs;                    \
+        }                                                                    \
+        BaseType_t haUnlockResult = xSemaphoreGiveRecursive(engineMutex);     \
+        configASSERT(haUnlockResult == pdTRUE);                              \
+        (void)haUnlockResult;                                                \
+    } while(0)
 
 #define HA_PERSIST_PROBE_MS 250UL
-#define HA_PERSIST_SD_COALESCE_MS 5000UL
+#define HA_PERSIST_SD_COALESCE_MS 1000UL
+#define HA_PERSIST_RETRY_MS 5000UL
+#define HA_CONFIG_REPAIR_MS 5000UL
 
 struct HaPersistenceRuntime {
     bool ready;
     bool usingSd;
     bool dirty;
+    bool nvsMirrorPending;
     uint32_t sessionNumber;
     uint32_t generation;
+    uint32_t nvsGeneration;
     uint32_t restoredFrom;
     uint32_t lastAttemptMs;
+    uint32_t lastNvsAttemptMs;
+    uint32_t lastConfigRepairMs;
     uint32_t lastProbeMs;
 };
 
@@ -129,20 +200,236 @@ static bool haPersistenceCheckpoint(bool force = false);
 static void haPersistenceBeginTransaction();
 static void haPersistenceEndTransaction();
 static bool haPersistenceRestoreHistory(const HaHistSession& session);
-static bool haPersistenceStartNewSession();
+static bool haPersistenceStartNewSession(bool discardOnArchiveFailure = false);
 
 // ---------------- sinks used by the engine ----------------
 
+static HaWsFlowState* haWsFlowFind(uint32_t wsId) {
+    if(!wsId) return nullptr;
+    for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++)
+        if(haWsFlow[i].wsId == wsId) return &haWsFlow[i];
+    return nullptr;
+}
+
+static bool haWsFlowBegin(uint32_t wsId) {
+    if(haWsFlowFind(wsId)) return true;
+    for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++) {
+        if(haWsFlow[i].wsId) continue;
+        haWsFlow[i] = HaWsFlowState{};
+        haWsFlow[i].wsId = wsId;
+        return true;
+    }
+    return false;
+}
+
+static void haWsFlowEnd(uint32_t wsId) {
+    HaWsFlowState* flow = haWsFlowFind(wsId);
+    if(flow) *flow = HaWsFlowState{};
+}
+
+static bool haWsReplaceableType(const char* type) {
+    static const char* const types[] = {
+        "lobby", "trivia", "duel", "draw", "pong", "wyr", "scramble",
+        "react", "gc", "bs", "spectrum", "kmk", "chess"
+    };
+    for(const char* candidate : types)
+        if(strcmp(type, candidate) == 0) return true;
+    return false;
+}
+
+static void haWsCacheState(HaWsFlowState& flow, const char* type, const String& msg) {
+    if(strcmp(type, "lobby") == 0) {
+        flow.lobby = msg;
+        flow.dirtyLobby = true;
+    } else {
+        flow.state = msg;
+        flow.dirtyState = true;
+    }
+    if(haDiagnostics.outputCoalesced != UINT32_MAX) haDiagnostics.outputCoalesced++;
+}
+
 void haWsSendWs(uint32_t wsId, const String& msg) {
     if(!wsId) return;
-    ws.text(wsId, msg);
+    AsyncWebSocketClient* client = ws.client(wsId);
+    HaWsFlowState* flow = haWsFlowFind(wsId);
+    if(!client || !flow) return;
+    size_t queueDepth = client->queueLen();
+    if(queueDepth > haDiagnostics.maxSocketQueue)
+        haDiagnostics.maxSocketQueue =
+            queueDepth > UINT16_MAX ? UINT16_MAX : (uint16_t)queueDepth;
+    char type[16];
+    bool haveType = ha_json_str(msg.c_str(), "t", type, sizeof(type));
+    bool replaceable = haveType && haWsReplaceableType(type);
+    bool stream = haveType && (strcmp(type, "ink") == 0 || strcmp(type, "pong") == 0);
+    if(stream && queueDepth >= 8) {
+        if(replaceable) haWsCacheState(*flow, type, msg);
+        if(haDiagnostics.streamDropped != UINT32_MAX) haDiagnostics.streamDropped++;
+        return;
+    }
+    if(replaceable && queueDepth >= 4) {
+        haWsCacheState(*flow, type, msg);
+        return;
+    }
+    // Only a nonreplaceable control message can trigger an overload close.
+    // State/stream pressure is handled above without evicting the identity.
+    if(!replaceable && queueDepth >= 16) {
+        if(haDiagnostics.overloadCloses != UINT32_MAX) haDiagnostics.overloadCloses++;
+        client->close(1013, "outbound overload");
+        return;
+    }
+    if(!client->text(msg) && replaceable) haWsCacheState(*flow, type, msg);
 }
 void haWsCloseWs(uint32_t wsId) {
     if(wsId) ws.close(wsId, 1008, "identity takeover");
 }
 void haWsBroadcast(const String& msg) {
-    ws.textAll(msg);
+    for(AsyncWebSocketClient& client : ws.getClients())
+        if(client.status() == WS_CONNECTED) haWsSendWs(client.id(), msg);
 }
+
+// Called under ENGINE_LOCK from loop(). A dropped/coalesced authoritative state
+// is retried only after that client's AsyncWebSocket queue drains below four.
+static void haWsFlushDirty() {
+    for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++) {
+        HaWsFlowState& flow = haWsFlow[i];
+        if(!flow.wsId || (!flow.dirtyLobby && !flow.dirtyState)) continue;
+        AsyncWebSocketClient* client = ws.client(flow.wsId);
+        if(!client || client->queueLen() >= 4) continue;
+        if(flow.dirtyLobby && client->text(flow.lobby)) {
+            flow.dirtyLobby = false;
+            flow.lobby = "";
+        }
+        if(flow.dirtyState && client->queueLen() < 4 && client->text(flow.state)) {
+            flow.dirtyState = false;
+            flow.state = "";
+        }
+    }
+}
+
+#define HA_AUTH_WINDOW_MS 60000UL
+#define HA_AUTH_LOCKOUT_MS 60000UL
+#define HA_AUTH_CLIENT_FAILURES 5
+#define HA_AUTH_GLOBAL_FAILURES 30
+#define HA_AUTH_CLIENT_BUCKETS 16
+
+static HaAuthCounter haAuthGlobal = {};
+static HaAuthClientBucket haAuthClients[HA_AUTH_CLIENT_BUCKETS] = {};
+
+// Explicit declarations keep Arduino's sketch preprocessor from synthesizing
+// prototypes above these local type definitions.
+static void haAuthNormalize(HaAuthCounter& counter, uint32_t now);
+static bool haAuthRecordFailure(HaAuthCounter& counter, uint8_t limit, uint32_t now);
+static HaAuthClientBucket& haAuthClient(uint32_t wsId, uint32_t now);
+
+static uint32_t haAuthRemaining(uint32_t now, uint32_t deadline) {
+    int32_t remaining = (int32_t)(deadline - now);
+    return remaining > 0 ? (uint32_t)remaining : 0;
+}
+
+static void haAuthNormalize(HaAuthCounter& counter, uint32_t now) {
+    if(counter.lockUntilMs) {
+        if(haAuthRemaining(now, counter.lockUntilMs)) return;
+        counter = HaAuthCounter{};
+    }
+    if(counter.windowStarted &&
+       (uint32_t)(now - counter.windowStartMs) >= HA_AUTH_WINDOW_MS)
+        counter = HaAuthCounter{};
+}
+
+static bool haAuthRecordFailure(HaAuthCounter& counter, uint8_t limit, uint32_t now) {
+    haAuthNormalize(counter, now);
+    if(counter.lockUntilMs) return true;
+    if(!counter.windowStarted) {
+        counter.windowStarted = true;
+        counter.windowStartMs = now;
+    }
+    if(counter.failures < UINT8_MAX) counter.failures++;
+    if(counter.failures < limit) return false;
+    counter.failures = 0;
+    counter.windowStarted = false;
+    counter.lockUntilMs = now + HA_AUTH_LOCKOUT_MS;
+    return true;
+}
+
+static HaAuthClientBucket& haAuthClient(uint32_t clientKey, uint32_t now) {
+    HaAuthClientBucket* available = nullptr;
+    HaAuthClientBucket* oldest = nullptr;
+    uint32_t oldestAge = 0;
+    for(uint8_t i = 0; i < HA_AUTH_CLIENT_BUCKETS; i++) {
+        HaAuthClientBucket& bucket = haAuthClients[i];
+        if(bucket.used && bucket.clientKey == clientKey) {
+            bucket.lastSeenMs = now;
+            return bucket;
+        }
+        if(!bucket.used && !available) available = &bucket;
+        if(bucket.used) {
+            haAuthNormalize(bucket.counter, now);
+            uint32_t age = now - bucket.lastSeenMs;
+            if(!oldest || age > oldestAge) {
+                oldest = &bucket;
+                oldestAge = age;
+            }
+        }
+    }
+    HaAuthClientBucket* bucket = available ? available : oldest;
+    configASSERT(bucket != nullptr);
+    *bucket = HaAuthClientBucket{};
+    bucket->used = true;
+    bucket->clientKey = clientKey;
+    bucket->lastSeenMs = now;
+    return *bucket;
+}
+
+uint8_t haAuthorizeIdentity(
+    uint32_t wsId,
+    const char* identity,
+    const char* code,
+    uint32_t* retryMs) {
+    if(retryMs) *retryMs = 0;
+    // The callback runs inside ENGINE_LOCK. A durable ledger identity bypasses
+    // both the party code and brute-force buckets so reboot/AP resume is reliable.
+    if(haHostIdentityKnown(identity)) return HA_JOIN_AUTH_KNOWN;
+
+    uint32_t now = millis();
+    AsyncWebSocketClient* socket = ws.client(wsId);
+    // The AP assigns one IPv4 address per station, so this survives a browser's
+    // reconnect/new WebSocket and cannot be bypassed by cycling socket ids.
+    uint32_t clientKey = socket ? (uint32_t)socket->remoteIP() : wsId;
+    HaAuthClientBucket& client = haAuthClient(clientKey, now);
+    haAuthNormalize(client.counter, now);
+    haAuthNormalize(haAuthGlobal, now);
+    uint32_t clientRetry = haAuthRemaining(now, client.counter.lockUntilMs);
+    uint32_t globalRetry = haAuthRemaining(now, haAuthGlobal.lockUntilMs);
+    if(clientRetry || globalRetry) {
+        if(retryMs) *retryMs = clientRetry > globalRetry ? clientRetry : globalRetry;
+        return HA_JOIN_AUTH_THROTTLED;
+    }
+
+    if(!code || !code[0]) return HA_JOIN_AUTH_REQUIRED;
+    if(strcmp(code, joinCode) == 0) {
+        client.counter = HaAuthCounter{};
+        if(!haHostCanTrackIdentity(identity))
+            return HA_JOIN_AUTH_FULL;
+        return HA_JOIN_AUTH_OK;
+    }
+
+    bool clientLocked = haAuthRecordFailure(
+        client.counter,
+        HA_AUTH_CLIENT_FAILURES,
+        now);
+    bool globalLocked = haAuthRecordFailure(
+        haAuthGlobal,
+        HA_AUTH_GLOBAL_FAILURES,
+        now);
+    if(clientLocked || globalLocked) {
+        clientRetry = haAuthRemaining(now, client.counter.lockUntilMs);
+        globalRetry = haAuthRemaining(now, haAuthGlobal.lockUntilMs);
+        if(retryMs) *retryMs = clientRetry > globalRetry ? clientRetry : globalRetry;
+        return HA_JOIN_AUTH_THROTTLED;
+    }
+    return HA_JOIN_AUTH_BAD_CODE;
+}
+
 void haUartJoinStable(
     uint8_t pid,
     const char* identity,
@@ -164,44 +451,42 @@ void haUartScore(uint8_t pid, int delta, const char* reason) {
     haHostScore(pid, delta);
     haPersistenceMarkDirty();
 }
-void haUartEvent(const String& json) {
-    // Same keys the Flipper's console picks out of the event feed.
-    char ev[HA_EV_LEN];
-    if(ha_json_str(json.c_str(), "duel", ev, sizeof(ev)) ||
-       ha_json_str(json.c_str(), "pong", ev, sizeof(ev)) ||
-       ha_json_str(json.c_str(), "draw", ev, sizeof(ev))) {
-        haHostSetEvent(ev);
-    } else if(ha_json_str(json.c_str(), "chat", ev, sizeof(ev))) {
-        haHostLog(ev); // lobby chatter, not a game status line
-    }
-}
 static const char* haNick(int pid) {
     if(pid >= 1 && pid <= HA_MAX_PLAYERS && haHost.p[pid].used) return haHost.p[pid].nick;
     return "?";
 }
 
-// Round results are pid-shaped on the wire ({"win":2,"lose":3}), which the Flipper
-// prints raw because its console is four lines of 5x7. There is room here, and the
-// host is the only screen that can name the players, so resolve them.
-void haUartRoundResult(const String& json) {
-    const char* j = json.c_str();
-    char buf[HA_EV_LEN];
-    char s[HA_EV_LEN];
-    int win = 0, lose = 0;
-    if(ha_json_int(j, "win", &win)) {
-        ha_json_int(j, "lose", &lose);
-        snprintf(buf, sizeof(buf), "%s beat %s", haNick(win), haNick(lose));
-    } else if(
-        ha_json_str(j, "trivia", s, sizeof(s)) || ha_json_str(j, "draw", s, sizeof(s)) ||
-        ha_json_str(j, "scramble", s, sizeof(s)) || ha_json_str(j, "react", s, sizeof(s)) ||
-        ha_json_str(j, "wyr", s, sizeof(s))) {
-        snprintf(buf, sizeof(buf), "%s", s); // "final", or "ALICE got it"
-    } else {
-        const char* d = ha_json_find(j, "draw");
-        if(d && *d == '[') strlcpy(buf, "round drawn", sizeof(buf)); // {"draw":[a,b]}
-        else strlcpy(buf, j, sizeof(buf));
+static const char* haGameName(uint8_t game) {
+    for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++)
+        if(HA_GENERATED_GAMES[i].id == game) return HA_GENERATED_GAMES[i].label;
+    return "Arcade";
+}
+
+void haUartHostEvent(
+    uint8_t kind,
+    uint8_t game,
+    uint8_t actor,
+    uint8_t target,
+    int16_t value,
+    const char* text) {
+    const char* gameName = haGameName(game);
+    const char* actorName = haNick(actor);
+    const char* targetName = haNick(target);
+    char line[HA_EV_LEN];
+    HaHostEventDisposition disposition = haFormatHostEvent(
+        kind,
+        gameName,
+        actorName,
+        targetName,
+        value,
+        text,
+        line,
+        sizeof(line));
+    if(disposition == HaHostEventLog) {
+        haHostLog(line);
+        return;
     }
-    haHostSetEvent(buf);
+    if(disposition == HaHostEventStatus) haHostSetEvent(line);
 }
 
 // ---------------- HTTP (captive) ----------------
@@ -246,9 +531,26 @@ static void onWsEvent(
     uint8_t* data,
     size_t len) {
     (void)srv;
-    if(type == WS_EVT_DISCONNECT) {
+    if(type == WS_EVT_CONNECT) {
+        ENGINE_LOCK();
+        HaSocketAdmission admission = haSocketConnect(haSockets, client->id(), millis());
+        bool flowReady = admission == HaSocketAccepted && haWsFlowBegin(client->id());
+        if(!flowReady && admission == HaSocketAccepted) {
+            haSocketDisconnect(haSockets, client->id());
+            admission = HaSocketObjectsFull;
+        }
+        ENGINE_UNLOCK();
+        if(admission != HaSocketAccepted) {
+            client->close(1013, admission == HaSocketPendingFull ? "pending full" : "socket full");
+            return;
+        }
+        // Firmware applies its own message-class thresholds. A replaceable state
+        // queue must never make the library evict an authenticated identity.
+        client->setCloseClientOnQueueFull(false);
+    } else if(type == WS_EVT_DISCONNECT) {
         uint32_t rawNow = millis();
         ENGINE_LOCK();
+        uint8_t detachedPid = engine.pidByWs(client->id());
         if(haPersistenceTransaction) {
             // Unauthenticated sockets can exceed the AP station count. Retain
             // only disconnects that own an Engine seat, bounded by its roster.
@@ -257,6 +559,9 @@ static void onWsEvent(
         }
         else
             engine.onWsDisconnect(client->id(), rawNow);
+        if(detachedPid) haHostSetOnline(detachedPid, false);
+        haSocketDisconnect(haSockets, client->id());
+        haWsFlowEnd(client->id());
         ENGINE_UNLOCK();
     } else if(type == WS_EVT_DATA) {
         AwsFrameInfo* info = (AwsFrameInfo*)arg;
@@ -267,14 +572,65 @@ static void onWsEvent(
             buf[len] = '\0';
             uint32_t rawNow = millis();
             ENGINE_LOCK();
-            if(!haPersistenceTransaction)
+            HaSocketSlot* slot = haSocketFind(haSockets, client->id());
+            char inputType[16];
+            bool haveType = ha_json_str(buf, "t", inputType, sizeof(inputType));
+            HaInboundClass inputClass = haInboundClass(haveType ? inputType : nullptr);
+            bool allowed = slot && haInboundAllow(slot->limiter, inputClass, rawNow);
+            if(!allowed && inputClass < HaInboundClassCount &&
+               haDiagnostics.rateRejected[inputClass] != UINT32_MAX)
+                haDiagnostics.rateRejected[inputClass]++;
+            if(allowed && !haPersistenceTransaction) {
                 engine.onInput(client->id(), buf, rawNow);
+                if(engine.pidByWs(client->id())) haSocketAuthenticate(haSockets, client->id());
+            }
             ENGINE_UNLOCK();
+        } else if(info->final && info->opcode == WS_TEXT) {
+            client->close(1009, "message too large");
         }
     }
 }
 
+static void haSocketTick(uint32_t now) {
+    uint32_t expired[HA_WS_PENDING_LIMIT];
+    uint8_t expiredCount = 0;
+    ENGINE_LOCK();
+    for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++) {
+        const HaSocketSlot& slot = haSockets.slots[i];
+        if(haSocketHelloExpired(slot, now) && expiredCount < HA_WS_PENDING_LIMIT)
+            expired[expiredCount++] = slot.wsId;
+    }
+    for(uint8_t i = 0; i < expiredCount; i++) {
+        haSocketDisconnect(haSockets, expired[i]);
+        haWsFlowEnd(expired[i]);
+    }
+    haWsFlushDirty();
+    haDiagnostics.wsAuthenticated = haSocketCount(haSockets, true);
+    haDiagnostics.wsPending = haSocketCount(haSockets, false);
+    haDiagnostics.wsObjects =
+        (uint8_t)(haDiagnostics.wsAuthenticated + haDiagnostics.wsPending);
+    ENGINE_UNLOCK();
+    for(uint8_t i = 0; i < expiredCount; i++)
+        ws.close(expired[i], 1008, "hello timeout");
+}
+
 // ---------------- AP lifecycle ----------------
+
+static void haEnsureJoinCode() {
+    if(joinCode[0]) return;
+    // Rejection sampling avoids modulo bias: [0, limit) contains an exact number
+    // of one-million-value ranges. esp_random() is backed by the ESP32 hardware
+    // RNG once the Wi-Fi driver is enabled immediately before this call.
+    static const uint32_t range = 1000000UL;
+    static const uint32_t limit = UINT32_MAX - (UINT32_MAX % range);
+    uint32_t randomValue = 0;
+    do randomValue = esp_random(); while(randomValue >= limit);
+    snprintf(joinCode, sizeof(joinCode), "%06lu", (unsigned long)(randomValue % range));
+}
+
+const char* haHostJoinCode() {
+    return joinCode;
+}
 
 // Handlers are registered once, not per start: the SSID editor stops and restarts
 // the portal, and addHandler() has no matching remove, so re-registering on every
@@ -289,9 +645,14 @@ static bool installHandlers() {
     return true;
 }
 
-static bool startPortal() {
-    if(!WiFi.mode(WIFI_AP) ||
-       !WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0)) ||
+static bool startPortalTransport() {
+    if(!WiFi.mode(WIFI_AP)) {
+        portalRunning = false;
+        Serial.println("[ha] Wi-Fi AP mode failed");
+        return false;
+    }
+    haEnsureJoinCode();
+    if(!WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0)) ||
        !WiFi.softAP(apName, nullptr, 1, 0, AP_MAX_CONN)) { // open AP
         portalRunning = false;
         Serial.println("[ha] AP start failed");
@@ -317,26 +678,72 @@ static bool startPortal() {
     return true;
 }
 
-static void stopPortal() {
-    if(portalRunning) {
-        ws.closeAll();
-        server.end();
-        dnsServer.stop();
-        WiFi.softAPdisconnect(true);
-        portalRunning = false;
-    }
+static void stopPortalTransport() {
+    if(!portalRunning) return;
+    ws.closeAll(1001, "access point pause");
+    server.end();
+    dnsServer.stop();
+    WiFi.softAPdisconnect(true);
+    portalRunning = false;
+    Serial.println("[ha] AP transport stopped");
+}
+
+static void haPortalResume() {
     ENGINE_LOCK();
-    uint8_t activeGame = haHost.activeGame;
-    engine.reset();
-    engine.setLang(HA_LANG_CODE[haLang]);
-    if(activeGame != HA_GAME_NONE) engine.selectGame(activeGame);
+    engine.transportResume(millis());
+    haHostLog("session resumed");
+    ENGINE_UNLOCK();
+    haApState = HaApRunning;
+    haApRequiredPlayers = 0;
+    haApReconnectStartedMs = 0;
+}
+
+// Freeze engine time and durably checkpoint before touching AP/DNS/server state.
+// If the forced checkpoint fails, the still-live transport is resumed unchanged.
+static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) {
+    if(!portalRunning) return true;
+    ENGINE_LOCK();
+    haApRequiredPlayers = (uint8_t)haHostPlayerCount();
+    engine.announceServerPause(
+        reason,
+        reconnectSsid ? reconnectSsid : apName,
+        HA_AP_RECONNECT_WINDOW_MS);
+    engine.transportPause(millis());
+    haHostLog("session paused");
+    haPersistenceMarkDirty();
+    ENGINE_UNLOCK();
+
+    if(!haPersistenceCheckpoint(true)) {
+        Serial.println("[ha] refusing AP change: active checkpoint failed");
+        haPortalResume();
+        return false;
+    }
+
+    ENGINE_LOCK();
     haHostSuspendConnections();
     haHost.portalRunning = false;
     haHostLog("AP stopped");
     ENGINE_UNLOCK();
-    if(!haPersistenceCheckpoint(true))
-        Serial.println("[ha] AP-stop active checkpoint failed");
-    Serial.println("[ha] AP stopped");
+    stopPortalTransport();
+    return true;
+}
+
+static bool haPortalStartReconnect() {
+    if(!startPortalTransport()) return false;
+    haApState = HaApReconnectWait;
+    haApReconnectStartedMs = millis();
+    if(!haApRequiredPlayers) haPortalResume();
+    return true;
+}
+
+static void haPortalTick(uint32_t now) {
+    if(haApState != HaApReconnectWait || !portalRunning) return;
+    ENGINE_LOCK();
+    uint8_t online = (uint8_t)haHostPlayerCount();
+    ENGINE_UNLOCK();
+    if(online >= haApRequiredPlayers ||
+       (uint32_t)(now - haApReconnectStartedMs) >= HA_AP_RECONNECT_WINDOW_MS)
+        haPortalResume();
 }
 
 // ---------------- host actions (called from the UI, on the loop task) ----------
@@ -351,8 +758,15 @@ void haHostSelectGame(uint8_t game) {
     ENGINE_UNLOCK();
 }
 
-void haHostResetScores() {
-    haPersistenceStartNewSession();
+bool haHostResetScores(bool discardOnArchiveFailure) {
+    bool started = haPersistenceStartNewSession(discardOnArchiveFailure);
+    if(started) {
+        // New Session is a new party-admission boundary as well as a new score
+        // ledger. A cryptographically fresh code is displayed immediately.
+        joinCode[0] = '\0';
+        haEnsureJoinCode();
+    }
+    return started;
 }
 
 void haHostRoundEnd() {
@@ -372,16 +786,39 @@ void haHostCheckpoint() {
 }
 
 void haHostApplySsid(const char* ssid) {
+    if(!ssid || !ssid[0] || strcmp(ssid, apName) == 0) return;
+    char previous[sizeof(apName)];
+    strlcpy(previous, apName, sizeof(previous));
+    bool wasUp = portalRunning;
+    if(wasUp && !haPortalPauseAndStop("ssid_change", ssid)) return;
+
     strlcpy(apName, ssid, sizeof(apName));
     haCfgSave();
-    bool wasUp = portalRunning;
-    if(wasUp) stopPortal();
-    if(wasUp && !startPortal()) Serial.println("[ha] AP restart failed");
+    if(!wasUp) return;
+    if(haPortalStartReconnect()) return;
+
+    Serial.println("[ha] new SSID failed; restoring prior SSID");
+    strlcpy(apName, previous, sizeof(apName));
+    haCfgSave();
+    if(!haPortalStartReconnect()) {
+        haApState = HaApManualOff;
+        Serial.println("[ha] prior SSID fallback also failed; AP remains paused");
+    }
 }
 
 void haHostTogglePortal() {
-    if(portalRunning) stopPortal();
-    else if(!startPortal()) Serial.println("[ha] AP start request failed");
+    if(haApState == HaApReconnectWait && portalRunning) {
+        haPortalResume(); // host explicitly resumes early with missing players
+        return;
+    }
+    if(portalRunning) {
+        if(haPortalPauseAndStop("ap_off", apName)) haApState = HaApManualOff;
+        return;
+    }
+    if(!haPortalStartReconnect()) {
+        haApState = HaApManualOff;
+        Serial.println("[ha] AP start request failed; session remains paused");
+    }
 }
 
 const char* haHostSsid() {
@@ -400,6 +837,12 @@ void haHostSnapshot(HaHost& dst) {
     ENGINE_UNLOCK();
 }
 
+void haHostDiagnosticsSnapshot(HaDiagnostics& dst) {
+    ENGINE_LOCK();
+    dst = haDiagnostics;
+    ENGINE_UNLOCK();
+}
+
 // ---------------- Arduino entry ----------------
 
 // Cardputer v1 microSD is on its own SPI bus: SCK=40, MISO=39, MOSI=14, CS=12.
@@ -415,12 +858,17 @@ static void haSdBegin() {
             SD.cardSize() / (1024ULL * 1024ULL),
             (int)SD.cardType());
     else
+    {
+        if(haDiagnostics.sdFailures != UINT32_MAX) haDiagnostics.sdFailures++;
         Serial.println("[ha] SD: no card or mount failed");
+    }
 }
 
 void haCfgSave() { // non-static: the UI calls this after any settings mutation
-    if(!haConfigSave(apName, haAudioLevel, haLang))
+    if(!haConfigSave(apName, haAudioLevel, haLang)) {
+        if(haDiagnostics.sdFailures != UINT32_MAX) haDiagnostics.sdFailures++;
         Serial.println("[ha] config checkpoint failed");
+    }
 }
 
 static bool haPersistenceStorageBegin() {
@@ -517,11 +965,50 @@ static bool haPersistenceHostFromNvs(const HaActiveNvsRecord& source, HaHost& ho
 }
 
 static void haPersistenceUseHistoryMetadata() {
+    bool wasUsingSd = haPersistence.usingSd;
+    uint32_t previousGeneration = haPersistence.generation;
     haPersistence.usingSd = haSdOk && haHistStorageReady();
     if(!haPersistence.usingSd) return;
     haPersistence.sessionNumber = haHistActive.num;
     haPersistence.generation = haHistActive.seq;
     haPersistence.restoredFrom = haHistActive.restoredFrom;
+    if(!wasUsingSd || previousGeneration != haPersistence.generation)
+        haPersistence.nvsMirrorPending = true;
+}
+
+static bool haPersistenceMirrorActiveNvs(bool force) {
+    if(!haPersistence.usingSd || !haPersistence.nvsMirrorPending) return true;
+    uint32_t now = millis();
+    if(!force && !haActiveNvsCheckpointDue(now, false)) return true;
+    if(!force && haPersistence.lastNvsAttemptMs &&
+       (uint32_t)(now - haPersistence.lastNvsAttemptMs) < HA_PERSIST_RETRY_MS)
+        return true;
+    haPersistence.lastNvsAttemptMs = now;
+
+    // Reconstruct from the verified SD record, not from newer live RAM, so both
+    // media carry exactly one logical generation and SD wins their intentional tie.
+    if(!haPersistenceHostFromHistory(haHistActive, *haPersistenceCandidate) ||
+       !haActiveNvsCaptureHost(
+           *haPersistenceCandidate,
+           haHistActive.num,
+           haHistActive.restoredFrom,
+           *haPersistenceNvsRecord,
+           haHistActive.seq)) {
+        Serial.println("[ha] active NVS mirror capture rejected");
+        return false;
+    }
+    HaActiveNvsCheckpointResult result = haActiveNvsCheckpointSdMirror(
+        *haPersistenceNvsRecord,
+        now,
+        force);
+    if(result == HaActiveNvsCheckpointDeferred) return true;
+    if(result != HaActiveNvsCheckpointWritten) {
+        Serial.println("[ha] active NVS mirror failed");
+        return false;
+    }
+    haPersistence.nvsGeneration = haHistActive.seq;
+    haPersistence.nvsMirrorPending = false;
+    return true;
 }
 
 static bool haPersistenceAdoptNvsToSd(
@@ -543,9 +1030,12 @@ static bool haPersistenceAdoptNvsToSd(
 
 static bool haPersistenceInitializeActive() {
     if(!haPersistenceStorageBegin()) return false;
+    haActiveNvsResetCheckpointRateLimit();
     bool sdValid = haSdOk && haHistStorageReady() &&
                    haHistActive.num != 0 && haHistActive.seq != 0;
     bool nvsValid = haActiveNvsRead(*haPersistenceNvsRecord);
+    haPersistence.nvsGeneration =
+        nvsValid ? haPersistenceNvsRecord->generation : 0;
     HaActiveNvsSource source = haActiveNvsChooseSource(
         sdValid,
         sdValid ? haHistActive.seq : 0,
@@ -556,10 +1046,6 @@ static bool haPersistenceInitializeActive() {
     if(source == HaActiveNvsSourceSd) {
         imported = haPersistenceHostFromHistory(haHistActive, *haPersistenceCandidate);
         haPersistenceUseHistoryMetadata();
-        // Never discard the fallback copy until the selected SD record has also
-        // passed the host-side import boundary.
-        if(imported && nvsValid && !haActiveNvsErase())
-            Serial.println("[ha] stale active NVS cleanup failed");
     } else if(source == HaActiveNvsSourceNvs) {
         imported = haPersistenceHostFromNvs(*haPersistenceNvsRecord, *haPersistenceCandidate);
         haPersistence.usingSd = false;
@@ -569,8 +1055,11 @@ static bool haPersistenceInitializeActive() {
         if(imported && sdValid) {
             if(haPersistenceAdoptNvsToSd(*haPersistenceNvsRecord, *haPersistenceCandidate)) {
                 haPersistenceUseHistoryMetadata();
-                if(!haActiveNvsErase())
-                    Serial.println("[ha] adopted active NVS cleanup failed");
+                // The adopted SD record and its source NVS record already share
+                // one verified generation and payload unless an immutable archive
+                // collision required assigning the active record a new session id.
+                haPersistence.nvsMirrorPending =
+                    haHistActive.num != haPersistenceNvsRecord->sessionNumber;
             } else {
                 // Keep the winning NVS record intact and use it as the active store.
                 haSdOk = false;
@@ -593,12 +1082,25 @@ static bool haPersistenceInitializeActive() {
     }
     if(!imported) return false;
 
+    if(haPersistence.usingSd) {
+        // Repair missing, stale, or equal-generation-conflicting NVS from the SD
+        // winner. Failure degrades to SD-only operation and is retried from loop().
+        if(!haPersistence.nvsMirrorPending &&
+           haPersistence.nvsGeneration == haPersistence.generation) {
+            haActiveNvsSetCheckpointBaseline(millis());
+        } else if(!haPersistenceMirrorActiveNvs(true)) {
+            Serial.println("[ha] initial active NVS mirror deferred after failure");
+        }
+    } else if(source == HaActiveNvsSourceNvs) {
+        // Avoid an immediate wear write merely because runtime bookkeeping reset.
+        haActiveNvsSetCheckpointBaseline(millis());
+    }
+
     ENGINE_LOCK();
     haHost = *haPersistenceCandidate;
     haHostTouch();
     haPersistence.dirty = source == HaActiveNvsSourceNone;
     ENGINE_UNLOCK();
-    haActiveNvsResetCheckpointRateLimit();
     haPersistence.ready = true;
     return true;
 }
@@ -612,6 +1114,7 @@ static void haPersistenceRecordSuccess(const HaHost& snapshot) {
 static void haPersistenceRecordFailure() {
     ENGINE_LOCK();
     haPersistence.dirty = true;
+    if(haDiagnostics.sdFailures != UINT32_MAX) haDiagnostics.sdFailures++;
     ENGINE_UNLOCK();
 }
 
@@ -623,6 +1126,7 @@ static bool haPersistenceActivateNvsFallback(uint8_t generationAdvance = 1) {
     }
     haPersistence.usingSd = false;
     haSdOk = false;
+    haPersistence.nvsMirrorPending = false;
     haActiveNvsResetCheckpointRateLimit();
     // Boot intentionally gives SD an equal-generation tie. The first fallback
     // record must therefore outrank the last verified SD slot, or reinserting
@@ -636,6 +1140,8 @@ static bool haPersistenceCheckpointSnapshot(const HaHost& snapshot, bool force) 
     if(haPersistence.usingSd && haSdOk) {
         if(haHistCheckpoint(snapshot, force)) {
             haPersistenceUseHistoryMetadata();
+            if(!haPersistenceMirrorActiveNvs(force))
+                Serial.println("[ha] active session is safe on SD; NVS mirror pending");
             haPersistenceRecordSuccess(snapshot);
             return true;
         }
@@ -673,7 +1179,11 @@ static bool haPersistenceCheckpointSnapshot(const HaHost& snapshot, bool force) 
         return false;
     }
     uint32_t generation = 0;
-    if(haActiveNvsLatestGeneration(generation)) haPersistence.generation = generation;
+    if(haActiveNvsLatestGeneration(generation)) {
+        haPersistence.generation = generation;
+        haPersistence.nvsGeneration = generation;
+    }
+    haPersistence.nvsMirrorPending = false;
     haPersistenceRecordSuccess(snapshot);
     return true;
 }
@@ -712,7 +1222,7 @@ static void haPersistenceZeroSessionScores(HaHost& host) {
     host.gameCount = 0;
 }
 
-static bool haPersistenceStartNewSession() {
+static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
     if(!haPersistence.ready) return false;
     haPersistenceBeginTransaction();
     haHostSnapshot(*haPersistenceSnapshot);
@@ -720,18 +1230,36 @@ static bool haPersistenceStartNewSession() {
     bool startedOnSd = haPersistence.usingSd;
     uint32_t previousSessionNumber = haPersistence.sessionNumber;
     uint32_t previousRestoredFrom = haPersistence.restoredFrom;
+    bool startWithoutArchive = false;
+
+    if(!haPersistence.usingSd && havePlayers && !discardOnArchiveFailure) {
+        ENGINE_LOCK();
+        haHostLog("archive unavailable");
+        ENGINE_UNLOCK();
+        haPersistenceEndTransaction();
+        return false;
+    }
 
     if(haPersistence.usingSd && havePlayers) {
         if(!haHistArchive(*haPersistenceSnapshot)) {
-            ENGINE_LOCK();
-            haHostLog("archive failed");
-            haPersistenceMarkDirty();
-            ENGINE_UNLOCK();
-            haPersistenceEndTransaction();
-            return false;
+            if(discardOnArchiveFailure) {
+                startWithoutArchive = true;
+            } else {
+                ENGINE_LOCK();
+                haHostLog("archive failed");
+                haPersistenceMarkDirty();
+                ENGINE_UNLOCK();
+                haPersistenceEndTransaction();
+                return false;
+            }
+        } else {
+            haPersistenceUseHistoryMetadata();
         }
-        haPersistenceUseHistoryMetadata();
-        haActiveNvsErase();
+        if(startWithoutArchive) {
+            ENGINE_LOCK();
+            haHostLog("archive skipped by host");
+            ENGINE_UNLOCK();
+        }
     } else if(haPersistence.usingSd && !havePlayers) {
         // There is nothing immutable to archive, but still clear play counts and
         // any transient engine score state in the existing empty active session.
@@ -763,7 +1291,22 @@ static bool haPersistenceStartNewSession() {
     // with the unchanged snapshot before reporting that the transaction failed.
     *haPersistenceCandidate = *haPersistenceSnapshot;
     haPersistenceZeroSessionScores(*haPersistenceCandidate);
-    if(!haPersistenceCheckpointSnapshot(*haPersistenceCandidate, true)) {
+    bool replacementProtected = false;
+    if(startWithoutArchive) {
+        replacementProtected = haHistStartNewActive(*haPersistenceCandidate);
+        if(replacementProtected) {
+            haPersistenceUseHistoryMetadata();
+            haPersistence.lastAttemptMs = millis();
+            if(!haPersistenceMirrorActiveNvs(true))
+                Serial.println("[ha] discarded-session NVS mirror remains pending");
+            haPersistenceRecordSuccess(*haPersistenceCandidate);
+        }
+    } else {
+        replacementProtected = haPersistenceCheckpointSnapshot(
+            *haPersistenceCandidate,
+            true);
+    }
+    if(!replacementProtected) {
         bool protectedCurrent = false;
         if(startedOnSd) {
             protectedCurrent = haHistCheckpointPrepared(
@@ -777,8 +1320,8 @@ static bool haPersistenceStartNewSession() {
                 // instead of retrying the unchanged session into a bad fallback.
                 haSdOk = true;
                 haPersistenceUseHistoryMetadata();
-                if(!haActiveNvsErase())
-                    Serial.println("[ha] rollback NVS cleanup failed");
+                if(!haPersistenceMirrorActiveNvs(true))
+                    Serial.println("[ha] rollback NVS mirror remains pending");
                 haPersistenceRecordSuccess(*haPersistenceSnapshot);
             } else {
                 // The failed candidate and failed rollback may each have left a
@@ -853,6 +1396,8 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
         if(rolledBack) {
             haPersistenceUseHistoryMetadata();
             haPersistence.lastAttemptMs = millis();
+            if(!haPersistenceMirrorActiveNvs(true))
+                Serial.println("[ha] restore-rollback NVS mirror remains pending");
             haPersistenceRecordSuccess(*haPersistenceSnapshot);
         } else {
             // A failed rollback means the card cannot currently protect the live
@@ -878,7 +1423,8 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     }
     haPersistenceUseHistoryMetadata();
     haPersistence.lastAttemptMs = millis();
-    haActiveNvsErase();
+    if(!haPersistenceMirrorActiveNvs(true))
+        Serial.println("[ha] restored session NVS mirror remains pending");
 
     // Existing phones must hello again because engine pids are intentionally not
     // persisted. closeAll() invokes disconnect callbacks, which the gate queues.
@@ -892,6 +1438,7 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     haHost = *haPersistenceCandidate;
     haHost.portalRunning = portalRunning;
     if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
+    if(!portalRunning) engine.transportPause(millis());
     haHostLog("history restored");
     haPersistence.dirty = false;
     ENGINE_UNLOCK();
@@ -904,6 +1451,11 @@ static void haPersistenceTick() {
     uint32_t now = millis();
     if((uint32_t)(now - haPersistence.lastProbeMs) < HA_PERSIST_PROBE_MS) return;
     haPersistence.lastProbeMs = now;
+    if((uint32_t)(now - haPersistence.lastConfigRepairMs) >= HA_CONFIG_REPAIR_MS) {
+        haPersistence.lastConfigRepairMs = now;
+        if(!haConfigRepairMirrors())
+            Serial.println("[ha] config mirror repair remains pending");
+    }
     // A forced UI checkpoint can advance the history sequence independently of
     // this timer. Keep the cross-media generation floor synchronized regardless.
     if(haPersistence.usingSd) haPersistenceUseHistoryMetadata();
@@ -911,12 +1463,20 @@ static void haPersistenceTick() {
     ENGINE_LOCK();
     bool dirty = haPersistence.dirty;
     ENGINE_UNLOCK();
-    if(!dirty) return;
-
-    uint32_t interval = haPersistence.usingSd
-                            ? HA_PERSIST_SD_COALESCE_MS
-                            : HA_ACTIVE_NVS_MIN_CHECKPOINT_MS;
-    if((uint32_t)(now - haPersistence.lastAttemptMs) < interval) return;
+    if(haPersistence.usingSd) {
+        if(dirty &&
+           (uint32_t)(now - haPersistence.lastAttemptMs) >=
+               HA_PERSIST_SD_COALESCE_MS) {
+            (void)haPersistenceCheckpoint(false);
+        } else if(haPersistence.nvsMirrorPending) {
+            (void)haPersistenceMirrorActiveNvs(false);
+        }
+        return;
+    }
+    if(!dirty ||
+       (uint32_t)(now - haPersistence.lastAttemptMs) <
+           HA_ACTIVE_NVS_MIN_CHECKPOINT_MS)
+        return;
     (void)haPersistenceCheckpoint(false);
 }
 
@@ -977,6 +1537,9 @@ void setup() {
     bool contentReady = haContentLoadAll(engine, HA_LANG_CODE[haLang]);
     if(contentReady) {
         if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
+        // Setup work and first-start storage I/O are not game time. AP startup
+        // resumes this clock only after the AP/DNS/HTTP transport is ready.
+        engine.transportPause(millis());
         haHostLog("packs loaded");
     }
     ENGINE_UNLOCK();
@@ -992,7 +1555,8 @@ void setup() {
         (unsigned)HA_BAKED_PACK_COUNT,
         (unsigned)ESP.getFreeHeap());
 
-    if(!startPortal()) haStartupFatal("access point");
+    if(!startPortalTransport()) haStartupFatal("access point");
+    haPortalResume();
     haUiDraw();
 
     // Confirm only after critical allocations, config/session recovery, content,
@@ -1004,8 +1568,15 @@ void setup() {
 }
 
 void loop() {
+    static uint32_t previousLoopMs = millis();
+    uint32_t now = millis();
+    uint32_t loopGap = now - previousLoopMs;
+    previousLoopMs = now;
+    if(loopGap > haDiagnostics.maxLoopGapMs) haDiagnostics.maxLoopGapMs = loopGap;
+
     M5Cardputer.update();
     haUiPumpKeys();
+    haSoundPump();
 
     if(haLangDirty) { // Settings changed the language -> re-stream that language's packs
         haLangDirty = false;
@@ -1013,11 +1584,14 @@ void loop() {
         ENGINE_LOCK();
         bool contentReady = haContentLoadAll(engine, HA_LANG_CODE[requestedLang]);
         if(contentReady) {
-            // Restart the active game so the phones get the new language right away:
-            // a fresh lobby with the new pack names instead of waiting for a round.
-            if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
             haLoadedLang = requestedLang;
-            haHostLog(requestedLang ? "language: Deutsch" : "language: English");
+            char event[HA_EV_LEN];
+            snprintf(
+                event,
+                sizeof(event),
+                "language: %s",
+                HA_LANG_NAME[requestedLang % HA_LANG_COUNT]);
+            haHostLog(event);
         } else {
             // The staged loader retains the previous content/language on failure.
             haHostLog("language load failed");
@@ -1031,12 +1605,21 @@ void loop() {
 
     if(portalRunning) {
         dnsServer.processNextRequest();
-        ws.cleanupClients();
+        ws.cleanupClients(HA_WS_OBJECT_LIMIT);
+        haSocketTick(now);
         ENGINE_LOCK();
-        engine.tick(millis());
+        engine.tick(now);
         ENGINE_UNLOCK();
+        haPortalTick(now);
     }
 
     haPersistenceTick();
+    haDiagnostics.freeHeap = ESP.getFreeHeap();
+    haDiagnostics.minFreeHeap = ESP.getMinFreeHeap();
+    haDiagnostics.largestFreeBlock =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    haDiagnostics.soundDropped = haSoundQueue.dropped();
+    haDiagnostics.checkpointGeneration = haPersistence.generation;
     haUiTick();
+    delay(1); // let Wi-Fi/AsyncTCP/idle tasks run between host frames
 }

@@ -39,6 +39,17 @@ static const char* const HA_HIST_ACTIVE_A = "/hotspot-arcade/active.a";
 static const char* const HA_HIST_ACTIVE_B = "/hotspot-arcade/active.b";
 static const char* const HA_HIST_LEGACY_CURRENT = "/hotspot-arcade/current.txt";
 static const char* const HA_HIST_LEGACY_ARCHIVE = "/hotspot-arcade/history.txt";
+static const char* const HA_HIST_LEGACY_CURRENT_IMPORTED =
+    "/hotspot-arcade/current.txt.v1.imported";
+static const char* const HA_HIST_LEGACY_ARCHIVE_IMPORTED =
+    "/hotspot-arcade/history.txt.v1.imported";
+static const char* const HA_HIST_INDEX = "/hotspot-arcade/history/index.bin";
+static const char* const HA_HIST_INDEX_TEMP = "/hotspot-arcade/history/.index.tmp";
+static const char* const HA_HIST_INDEX_OLD = "/hotspot-arcade/history/.index.old";
+
+#define HA_HIST_INDEX_SCHEMA 2
+#define HA_HIST_INDEX_HEADER_BYTES 16
+#define HA_HIST_INDEX_REBUILD_BATCH 32
 
 struct HaHistPlayer {
     char clientId[HA_CLIENT_ID_LEN];
@@ -80,6 +91,7 @@ struct HaHistCatalog {
     uint32_t maxNum;
     bool hasNewer;
     bool hasOlder;
+    uint32_t indexStart;
 };
 
 struct HaHistRuntime {
@@ -93,31 +105,35 @@ static HaHistCatalog* haHistStorage = nullptr;
 #define haHist (*haHistStorage)
 static HaHistRuntime haHistRt = {false, false, -1, nullptr};
 static HaHistSession* haHistScratch = nullptr;
+static HaHistSession* haHistVerify = nullptr;
 #define haHistActive (*haHistRt.active)
 
-// Active + one serialized work record are allocated once at first SD use. This
-// keeps ~4KB out of static DRAM without risking the loop task's small stack. Every
-// history API runs on loop(), never from AsyncTCP; callbacks receive caller-owned
-// records so the one scratch buffer is never re-entered by restore logic.
+// Active state plus scratch and verification records are allocated once at first
+// SD use. This keeps the three session records out of static DRAM without risking
+// the loop task's small stack. Every history API runs on loop(), never from
+// AsyncTCP; callbacks receive caller-owned records.
 static bool haHistStorageBegin() {
-    if(haHistRt.active && haHistScratch && haHistStorage) return true;
+    if(haHistRt.active && haHistScratch && haHistVerify && haHistStorage) return true;
     HaHistSession* active = new(std::nothrow) HaHistSession{};
     HaHistSession* scratch = new(std::nothrow) HaHistSession{};
+    HaHistSession* verify = new(std::nothrow) HaHistSession{};
     HaHistCatalog* catalog = new(std::nothrow) HaHistCatalog{};
-    if(!active || !scratch || !catalog) {
+    if(!active || !scratch || !verify || !catalog) {
         delete active;
         delete scratch;
+        delete verify;
         delete catalog;
         return false;
     }
     haHistRt.active = active;
     haHistScratch = scratch;
+    haHistVerify = verify;
     haHistStorage = catalog;
     return true;
 }
 
 static bool haHistStorageReady() {
-    return haHistRt.active && haHistScratch && haHistStorage;
+    return haHistRt.active && haHistScratch && haHistVerify && haHistStorage;
 }
 
 extern bool haSdOk;
@@ -140,25 +156,28 @@ static uint32_t haHistCrcLine(uint32_t crc, const char* line) {
     return haHistCrcUpdate(crc, &nl, 1);
 }
 
-// 1 = a complete line, 0 = clean EOF, -1 = line exceeded the fixed buffer.
+// 1 = LF-terminated line, 2 = unterminated final line, 0 = clean EOF,
+// -1 = line exceeded the fixed buffer. V2 records require status 1 for every line;
+// legacy import tolerates status 2 because the old writer did not promise a final LF.
 static int haHistReadLine(File& f, char* out, size_t cap) {
     if(!out || cap < 2) return -1;
     size_t n = 0;
     bool got = false;
     bool overflow = false;
+    bool newline = false;
     while(f.available()) {
         int v = f.read();
         if(v < 0) break;
         got = true;
         char c = (char)v;
-        if(c == '\n') break;
+        if(c == '\n') { newline = true; break; }
         if(c == '\r') continue;
         if(n + 1 < cap) out[n++] = c;
         else overflow = true;
     }
     out[n] = '\0';
     if(overflow) return -1;
-    return got ? 1 : 0;
+    return got ? (newline ? 1 : 2) : 0;
 }
 
 static bool haHistParseU32(const char* s, uint32_t& out) {
@@ -228,6 +247,105 @@ static bool haHistDecode(const char* in, char* out, size_t cap) {
     return true;
 }
 
+static bool haHistValidUtf8(const char* value, size_t capacity, bool allowEmpty) {
+    if(!value || !capacity) return false;
+    size_t length = strnlen(value, capacity);
+    if(length >= capacity || (!allowEmpty && length == 0)) return false;
+    const uint8_t* p = (const uint8_t*)value;
+    const uint8_t* end = p + length;
+    while(p < end) {
+        if(*p < 0x20 || *p == 0x7F) return false;
+        if(*p < 0x80) { p++; continue; }
+        uint8_t needed = 0;
+        uint32_t code = 0;
+        if((*p & 0xE0) == 0xC0) {
+            needed = 1;
+            code = *p & 0x1F;
+            if(code < 2) return false;
+        } else if((*p & 0xF0) == 0xE0) {
+            needed = 2;
+            code = *p & 0x0F;
+        } else if((*p & 0xF8) == 0xF0) {
+            needed = 3;
+            code = *p & 0x07;
+        } else {
+            return false;
+        }
+        p++;
+        if((size_t)(end - p) < needed) return false;
+        for(uint8_t i = 0; i < needed; i++, p++) {
+            if((*p & 0xC0) != 0x80) return false;
+            code = (code << 6) | (*p & 0x3F);
+        }
+        if((needed == 2 && code < 0x800) || (needed == 3 && code < 0x10000) ||
+           (code >= 0x80 && code <= 0x9F) ||
+           (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF)
+            return false;
+    }
+    return true;
+}
+
+static bool haHistIdentityValid(const char* identity) {
+    if(!identity) return false;
+    size_t length = strnlen(identity, HA_CLIENT_ID_LEN);
+    if(length == 0) return true; // legacy v1 standings have no browser identity
+    if(length != 32 || identity[32] != '\0') return false;
+    for(uint8_t i = 0; i < 32; i++) {
+        char c = identity[i];
+        if(!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    return true;
+}
+
+static bool haHistKnownGame(uint8_t game, bool allowNone) {
+    if(game == HA_GAME_NONE) return allowNone;
+    switch(game) {
+    case HA_GAME_TRIVIA:
+    case HA_GAME_CONNECT4:
+    case HA_GAME_TICTACTOE:
+    case HA_GAME_DOTS:
+    case HA_GAME_DRAW:
+    case HA_GAME_PONG:
+    case HA_GAME_REACT:
+    case HA_GAME_WYR:
+    case HA_GAME_SCRAMBLE:
+    case HA_GAME_REVERSI:
+    case HA_GAME_GUESSCOLOR:
+    case HA_GAME_BATTLESHIP:
+    case HA_GAME_SPECTRUM:
+    case HA_GAME_KMK:
+    case HA_GAME_CHESS:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool haHistRecordValid(const HaHistSession& session) {
+    if(!session.num || !session.seq || session.count > HA_SESSION_MAX_PLAYERS ||
+       session.gameCount > HA_SESSION_GAME_STATS_MAX ||
+       !haHistKnownGame(session.game, true) || (session.archived && !session.count))
+        return false;
+    for(uint8_t i = 0; i < session.count; i++) {
+        const HaHistPlayer& player = session.p[i];
+        if(!haHistIdentityValid(player.clientId) ||
+           !haHistValidUtf8(player.nick, sizeof(player.nick), false) ||
+           !haHistValidUtf8(player.avatar, sizeof(player.avatar), true))
+            return false;
+        if(player.clientId[0]) {
+            for(uint8_t prior = 0; prior < i; prior++)
+                if(strcmp(player.clientId, session.p[prior].clientId) == 0) return false;
+        }
+    }
+    for(uint8_t i = 0; i < session.gameCount; i++) {
+        if(!haHistKnownGame(session.games[i].game, false) || !session.games[i].count)
+            return false;
+        for(uint8_t prior = 0; prior < i; prior++)
+            if(session.games[i].game == session.games[prior].game) return false;
+    }
+    return true;
+}
+
 static bool haHistWriteLine(File& f, uint32_t& crc, const char* fmt, ...) {
     char line[HA_HIST_LINE_MAX];
     va_list ap;
@@ -257,6 +375,20 @@ static bool haHistSameState(const HaHistSession& a, const HaHistSession& b) {
            a.games[i].count != b.games[i].count)
             return false;
     return true;
+}
+
+static bool haHistSameRecord(const HaHistSession& a, const HaHistSession& b) {
+    return a.num == b.num && a.seq == b.seq && a.archived == b.archived &&
+           haHistSameState(a, b);
+}
+
+static bool haHistArchiveCommitsActive(
+    const HaHistSession& archive,
+    const HaHistSession& active) {
+    if(active.seq == UINT32_MAX) return false;
+    uint32_t expectedSeq = active.seq + 1;
+    return archive.archived && !active.archived && archive.num == active.num &&
+           archive.seq == expectedSeq && haHistSameState(archive, active);
 }
 
 static void haHistSort(HaHistSession& s) {
@@ -302,7 +434,8 @@ static void haHistFromHost(const HaHost& src, HaHistSession& dst) {
         for(uint8_t pid = 1; pid <= HA_MAX_PLAYERS && dst.count < HA_SESSION_MAX_PLAYERS; pid++) {
             if(!src.p[pid].used) continue;
             HaHistPlayer& hp = dst.p[dst.count++];
-            snprintf(hp.clientId, sizeof(hp.clientId), "pid-%u", (unsigned)pid);
+            // Pre-v2 engine snapshots have no stable browser identity. Keep the
+            // identity empty rather than persisting a PID that changes on resume.
             strlcpy(hp.nick, src.p[pid].nick, sizeof(hp.nick));
             hp.score = src.p[pid].score;
         }
@@ -322,9 +455,7 @@ static void haHistFromHost(const HaHost& src, HaHistSession& dst) {
 }
 
 static bool haHistWriteRecord(const char* path, const HaHistSession& s) {
-    if(!path || !s.num || !s.seq || s.count > HA_SESSION_MAX_PLAYERS ||
-       s.gameCount > HA_SESSION_GAME_STATS_MAX)
-        return false;
+    if(!path || !haHistRecordValid(s)) return false;
     SD.remove(path); // callers only pass a disposable active slot or temp file
     File f = SD.open(path, FILE_WRITE);
     if(!f) return false;
@@ -492,7 +623,10 @@ static bool haHistReadRecord(const char* path, HaHistSession& out, int expectedA
     // `restored_from` and `gameplays` were added without changing the HA2 marker;
     // their absence therefore means zero when reading an earlier v2 record.
     (void)haveRestoredFrom;
-    if(ok) haHistSortGames(s);
+    if(ok) {
+        haHistSortGames(s);
+        ok = haHistRecordValid(s);
+    }
     return ok;
 }
 
@@ -516,11 +650,12 @@ static bool haHistWriteArchive(const HaHistSession& source) {
     uint8_t expectedGameCount = source.gameCount;
     SD.remove(tempPath);
     if(!haHistWriteRecord(tempPath, source)) return false;
-    if(!haHistReadRecord(tempPath, *haHistScratch, 1) ||
-       haHistScratch->num != expectedNum || haHistScratch->seq != expectedSeq ||
-       haHistScratch->restoredFrom != expectedRestoredFrom ||
-       haHistScratch->game != expectedGame || haHistScratch->count != expectedCount ||
-       haHistScratch->gameCount != expectedGameCount) {
+    if(!haHistReadRecord(tempPath, *haHistVerify, 1) ||
+       haHistVerify->num != expectedNum || haHistVerify->seq != expectedSeq ||
+       haHistVerify->restoredFrom != expectedRestoredFrom ||
+       haHistVerify->game != expectedGame || haHistVerify->count != expectedCount ||
+       haHistVerify->gameCount != expectedGameCount ||
+       !haHistSameRecord(source, *haHistVerify)) {
         SD.remove(tempPath);
         return false;
     }
@@ -549,28 +684,238 @@ static bool haHistParseArchiveName(const char* path, uint32_t& num) {
     return true;
 }
 
-static void haHistRefreshStats() {
+struct HaHistIndexMeta {
+    uint32_t count;
+    uint32_t crc;
+};
+
+static void haHistLe16(uint8_t out[2], uint16_t value) {
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+}
+
+static void haHistLe32(uint8_t out[4], uint32_t value) {
+    out[0] = (uint8_t)value;
+    out[1] = (uint8_t)(value >> 8);
+    out[2] = (uint8_t)(value >> 16);
+    out[3] = (uint8_t)(value >> 24);
+}
+
+static uint16_t haHistFromLe16(const uint8_t in[2]) {
+    return (uint16_t)in[0] | ((uint16_t)in[1] << 8);
+}
+
+static uint32_t haHistFromLe32(const uint8_t in[4]) {
+    return (uint32_t)in[0] | ((uint32_t)in[1] << 8) |
+           ((uint32_t)in[2] << 16) | ((uint32_t)in[3] << 24);
+}
+
+static bool haHistReadBytes(File& file, uint8_t* out, size_t length) {
+    for(size_t i = 0; i < length; i++) {
+        int value = file.read();
+        if(value < 0) return false;
+        out[i] = (uint8_t)value;
+    }
+    return true;
+}
+
+static bool haHistIndexHeader(File& file, HaHistIndexMeta& meta) {
+    uint8_t header[HA_HIST_INDEX_HEADER_BYTES];
+    if(!file || file.isDirectory() || !haHistReadBytes(file, header, sizeof(header)) ||
+       memcmp(header, "HAI2", 4) != 0 ||
+       haHistFromLe16(header + 4) != HA_HIST_INDEX_SCHEMA ||
+       haHistFromLe16(header + 6) != HA_HIST_INDEX_HEADER_BYTES)
+        return false;
+    meta.count = haHistFromLe32(header + 8);
+    meta.crc = haHistFromLe32(header + 12);
+    uint64_t expectedSize = (uint64_t)HA_HIST_INDEX_HEADER_BYTES +
+                            (uint64_t)meta.count * sizeof(uint32_t);
+    return expectedSize == file.size();
+}
+
+static bool haHistIndexReadId(File& file, uint32_t& id, uint32_t* crc = nullptr) {
+    uint8_t encoded[4];
+    if(!haHistReadBytes(file, encoded, sizeof(encoded))) return false;
+    if(crc) *crc = haHistCrcUpdate(*crc, encoded, sizeof(encoded));
+    id = haHistFromLe32(encoded);
+    return id != 0;
+}
+
+static bool haHistIndexValidate(const char* path, HaHistIndexMeta* output = nullptr) {
+    File file = SD.open(path, FILE_READ);
+    HaHistIndexMeta meta = {};
+    if(!haHistIndexHeader(file, meta)) { if(file) file.close(); return false; }
+    uint32_t crc = 0xFFFFFFFFUL;
+    uint32_t previous = UINT32_MAX;
+    for(uint32_t i = 0; i < meta.count; i++) {
+        uint32_t id = 0;
+        if(!haHistIndexReadId(file, id, &crc) ||
+           (i > 0 && id >= previous)) {
+            file.close();
+            return false;
+        }
+        previous = id;
+    }
+    bool ok = !file.available() && (crc ^ 0xFFFFFFFFUL) == meta.crc;
+    file.close();
+    if(ok && output) *output = meta;
+    return ok;
+}
+
+static bool haHistIndexWriteHeader(File& file, uint32_t count, uint32_t crc) {
+    uint8_t header[HA_HIST_INDEX_HEADER_BYTES] = {'H', 'A', 'I', '2'};
+    haHistLe16(header + 4, HA_HIST_INDEX_SCHEMA);
+    haHistLe16(header + 6, HA_HIST_INDEX_HEADER_BYTES);
+    haHistLe32(header + 8, count);
+    haHistLe32(header + 12, crc);
+    return file.seek(0) && file.write(header, sizeof(header)) == sizeof(header);
+}
+
+static void haHistIndexCandidate(
+    uint32_t candidates[HA_HIST_INDEX_REBUILD_BATCH],
+    uint8_t& count,
+    uint32_t id) {
+    uint8_t position = 0;
+    while(position < count && candidates[position] > id) position++;
+    if(position < count && candidates[position] == id) return;
+    if(position >= HA_HIST_INDEX_REBUILD_BATCH) return;
+    uint8_t end = count < HA_HIST_INDEX_REBUILD_BATCH
+                      ? count
+                      : HA_HIST_INDEX_REBUILD_BATCH - 1;
+    for(int index = end; index > position; index--)
+        candidates[index] = candidates[index - 1];
+    candidates[position] = id;
+    if(count < HA_HIST_INDEX_REBUILD_BATCH) count++;
+}
+
+// Rebuild in bounded 32-id batches. This uses O(1) RAM regardless of retained
+// history size; rebuilding is slower than normal indexed paging but is needed only
+// after migration, archive creation, or a corrupt/missing cache.
+static bool haHistIndexRebuild() {
+    if(!haSdOk || !haHistStorageReady()) return false;
+    SD.remove(HA_HIST_INDEX_TEMP);
+    File output = SD.open(HA_HIST_INDEX_TEMP, FILE_WRITE);
+    if(!output) return false;
+    uint8_t blank[HA_HIST_INDEX_HEADER_BYTES] = {};
+    if(output.write(blank, sizeof(blank)) != sizeof(blank)) {
+        output.close();
+        SD.remove(HA_HIST_INDEX_TEMP);
+        return false;
+    }
+
+    uint32_t count = 0;
+    uint32_t crc = 0xFFFFFFFFUL;
+    uint64_t upperExclusive = (uint64_t)UINT32_MAX + 1ULL;
+    bool ok = true;
+    while(ok) {
+        uint32_t candidates[HA_HIST_INDEX_REBUILD_BATCH] = {};
+        uint8_t candidateCount = 0;
+        File directory = SD.open(HA_HIST_ARCHIVE_DIR, FILE_READ);
+        if(!directory || !directory.isDirectory()) {
+            if(directory) directory.close();
+            ok = false;
+            break;
+        }
+        File entry = directory.openNextFile();
+        while(entry) {
+            char name[96];
+            strlcpy(name, entry.name(), sizeof(name));
+            bool isDirectory = entry.isDirectory();
+            entry.close();
+            uint32_t id = 0;
+            if(!isDirectory && haHistParseArchiveName(name, id) && id < upperExclusive)
+                haHistIndexCandidate(candidates, candidateCount, id);
+            entry = directory.openNextFile();
+        }
+        directory.close();
+        if(!candidateCount) break;
+
+        for(uint8_t i = 0; i < candidateCount; i++) {
+            char path[64];
+            haHistArchivePath(candidates[i], path, sizeof(path));
+            if(!haHistReadRecord(path, *haHistScratch, 1) ||
+               haHistScratch->num != candidates[i])
+                continue; // corrupt archives are retained but omitted from the cache
+            uint8_t encoded[4];
+            haHistLe32(encoded, candidates[i]);
+            if(count == UINT32_MAX || output.write(encoded, sizeof(encoded)) != sizeof(encoded)) {
+                ok = false;
+                break;
+            }
+            crc = haHistCrcUpdate(crc, encoded, sizeof(encoded));
+            count++;
+        }
+        upperExclusive = candidates[candidateCount - 1];
+    }
+
+    if(ok) ok = haHistIndexWriteHeader(output, count, crc ^ 0xFFFFFFFFUL);
+    output.flush();
+    output.close();
+    if(!ok || !haHistIndexValidate(HA_HIST_INDEX_TEMP)) {
+        SD.remove(HA_HIST_INDEX_TEMP);
+        return false;
+    }
+
+    SD.remove(HA_HIST_INDEX_OLD);
+    bool hadIndex = SD.exists(HA_HIST_INDEX);
+    if(hadIndex && !SD.rename(HA_HIST_INDEX, HA_HIST_INDEX_OLD)) {
+        SD.remove(HA_HIST_INDEX_TEMP);
+        return false;
+    }
+    if(!SD.rename(HA_HIST_INDEX_TEMP, HA_HIST_INDEX)) {
+        if(hadIndex) SD.rename(HA_HIST_INDEX_OLD, HA_HIST_INDEX);
+        SD.remove(HA_HIST_INDEX_TEMP);
+        return false;
+    }
+    if(!haHistIndexValidate(HA_HIST_INDEX)) {
+        SD.remove(HA_HIST_INDEX);
+        if(hadIndex) SD.rename(HA_HIST_INDEX_OLD, HA_HIST_INDEX);
+        return false;
+    }
+    SD.remove(HA_HIST_INDEX_OLD);
+    return true;
+}
+
+static bool haHistIndexEnsure() {
+    if(haHistIndexValidate(HA_HIST_INDEX)) {
+        SD.remove(HA_HIST_INDEX_TEMP);
+        SD.remove(HA_HIST_INDEX_OLD);
+        return true;
+    }
+    return haHistIndexRebuild();
+}
+
+static bool haHistIndexIdAt(uint32_t ordinal, uint32_t& id) {
+    File file = SD.open(HA_HIST_INDEX, FILE_READ);
+    HaHistIndexMeta meta = {};
+    if(!haHistIndexHeader(file, meta) || ordinal >= meta.count ||
+       !file.seek(HA_HIST_INDEX_HEADER_BYTES + ordinal * sizeof(uint32_t)) ||
+       !haHistIndexReadId(file, id)) {
+        if(file) file.close();
+        return false;
+    }
+    file.close();
+    return true;
+}
+
+static bool haHistRefreshStats() {
     haHist.total = 0;
     haHist.minNum = 0;
     haHist.maxNum = 0;
-    if(!haSdOk) return;
-    File dir = SD.open(HA_HIST_ARCHIVE_DIR);
-    if(!dir || !dir.isDirectory()) { if(dir) dir.close(); return; }
-    File entry = dir.openNextFile();
-    while(entry) {
-        char name[96];
-        strlcpy(name, entry.name(), sizeof(name));
-        bool isDir = entry.isDirectory();
-        entry.close();
-        uint32_t num = 0;
-        if(!isDir && haHistParseArchiveName(name, num)) {
-            haHist.total++;
-            if(!haHist.minNum || num < haHist.minNum) haHist.minNum = num;
-            if(num > haHist.maxNum) haHist.maxNum = num;
+    if(!haSdOk || !haHistIndexEnsure()) return false;
+    HaHistIndexMeta meta = {};
+    if(!haHistIndexValidate(HA_HIST_INDEX, &meta)) return false;
+    haHist.total = meta.count;
+    if(meta.count) {
+        if(!haHistIndexIdAt(0, haHist.maxNum) ||
+           !haHistIndexIdAt(meta.count - 1, haHist.minNum)) {
+            haHist.total = 0;
+            haHist.minNum = 0;
+            haHist.maxNum = 0;
+            return false;
         }
-        entry = dir.openNextFile();
     }
-    dir.close();
+    return true;
 }
 
 static uint32_t haHistReserveNum() {
@@ -582,9 +927,9 @@ static uint32_t haHistReserveNum() {
         if(saved > high) high = saved;
         if(high == UINT32_MAX) { p.end(); return 0; }
         uint32_t next = high + 1;
-        p.putUInt("n", next);
+        bool stored = p.putUInt("n", next) == sizeof(next);
         p.end();
-        return next;
+        return stored ? next : 0;
     }
     return high == UINT32_MAX ? 0 : high + 1;
 }
@@ -595,36 +940,176 @@ static bool haHistParseLegacyPlayer(char* line, HaHistPlayer& p) {
     *tab++ = '\0';
     p = HaHistPlayer{};
     return haHistParseI32(line, p.score) && tab[0] &&
-           strlcpy(p.nick, tab, sizeof(p.nick)) < sizeof(p.nick);
+           strlcpy(p.nick, tab, sizeof(p.nick)) < sizeof(p.nick) &&
+           haHistValidUtf8(p.nick, sizeof(p.nick), false);
 }
 
-static void haHistMigrateLegacyArchive() {
-    if(!SD.exists(HA_HIST_LEGACY_ARCHIVE) || haHist.total) return;
+static char* haHistLegacyToken(char*& cursor) {
+    while(*cursor == ' ') cursor++;
+    if(!*cursor) return nullptr;
+    char* token = cursor;
+    while(*cursor && *cursor != ' ') cursor++;
+    if(*cursor) *cursor++ = '\0';
+    return token;
+}
+
+static bool haHistParseLegacySessionHeader(
+    char* line,
+    uint32_t& num,
+    uint32_t& count,
+    bool& haveCount) {
+    if(strncmp(line, "SESSION ", 8) != 0) return false;
+    char* cursor = line + 8;
+    char* numberText = haHistLegacyToken(cursor);
+    char* countText = haHistLegacyToken(cursor);
+    char* extra = haHistLegacyToken(cursor);
+    haveCount = countText != nullptr;
+    count = 0;
+    return numberText && !extra && haHistParseU32(numberText, num) && num != 0 &&
+           (!haveCount || (haHistParseU32(countText, count) &&
+                           count <= HA_SESSION_MAX_PLAYERS));
+}
+
+static bool haHistParseLegacyCurrentHeader(char* line, uint32_t& count) {
+    if(strncmp(line, "CURRENT ", 8) != 0) return false;
+    char* cursor = line + 8;
+    char* countText = haHistLegacyToken(cursor);
+    return countText && !haHistLegacyToken(cursor) &&
+           haHistParseU32(countText, count) && count <= HA_SESSION_MAX_PLAYERS;
+}
+
+static bool haHistFileFingerprint(
+    const char* path,
+    size_t& outputSize,
+    uint32_t& outputCrc) {
+    File file = SD.open(path, FILE_READ);
+    if(!file || file.isDirectory()) {
+        if(file) file.close();
+        return false;
+    }
+    outputSize = file.size();
+    size_t read = 0;
+    uint32_t crc = 0xFFFFFFFFUL;
+    while(file.available()) {
+        int value = file.read();
+        if(value < 0) { file.close(); return false; }
+        uint8_t byte = (uint8_t)value;
+        crc = haHistCrcUpdate(crc, &byte, 1);
+        read++;
+    }
+    file.close();
+    outputCrc = crc ^ 0xFFFFFFFFUL;
+    return read == outputSize;
+}
+
+static bool haHistPromoteLegacy(const char* source, const char* imported) {
+    if(!SD.exists(source)) return true;
+    // Never overwrite an earlier preserved original. Seeing both names requires
+    // operator attention rather than guessing which legacy file is authoritative.
+    if(SD.exists(imported)) return false;
+    size_t sourceSize = 0;
+    uint32_t sourceCrc = 0;
+    if(!haHistFileFingerprint(source, sourceSize, sourceCrc) ||
+       !SD.rename(source, imported))
+        return false;
+    size_t importedSize = 0;
+    uint32_t importedCrc = 0;
+    bool verified = !SD.exists(source) &&
+                    haHistFileFingerprint(imported, importedSize, importedCrc) &&
+                    importedSize == sourceSize && importedCrc == sourceCrc;
+    if(!verified && !SD.exists(source)) SD.rename(imported, source);
+    return verified;
+}
+
+static bool haHistCommitLegacyArchive(HaHistSession& session) {
+    if(!session.num) return true;
+    if(!session.count) return false;
+    session.archived = true;
+    session.restoredFrom = 0;
+    session.game = HA_GAME_NONE;
+    session.gameCount = 0;
+    session.seq = session.num;
+    haHistSort(session);
+    if(!haHistRecordValid(session)) return false;
+    char path[64];
+    haHistArchivePath(session.num, path, sizeof(path));
+    if(SD.exists(path)) {
+        return haHistReadRecord(path, *haHistVerify, 1) &&
+               haHistSameRecord(session, *haHistVerify);
+    }
+    return haHistWriteArchive(session);
+}
+
+static bool haHistMigrateLegacyArchive(bool& wroteArchive) {
+    wroteArchive = false;
+    if(!SD.exists(HA_HIST_LEGACY_ARCHIVE)) return true;
     File f = SD.open(HA_HIST_LEGACY_ARCHIVE, FILE_READ);
-    if(!f) return;
-    HaHistSession& cur = *haHistScratch;
+    if(!f) return false;
+    HaHistSession& cur = haHistActive; // scratch remains available for verified reads
     cur = HaHistSession{};
     cur.archived = true;
     char line[HA_HIST_LINE_MAX];
     int lr = 0;
-    while((lr = haHistReadLine(f, line, sizeof(line))) == 1) {
+    bool ok = true;
+    uint32_t declaredCount = 0;
+    bool haveDeclaredCount = false;
+    while((lr = haHistReadLine(f, line, sizeof(line))) == 1 || lr == 2) {
+        bool finalLine = lr == 2;
+        if(!line[0]) {
+            if(finalLine) break;
+            continue;
+        }
         if(strncmp(line, "SESSION ", 8) == 0) {
-            if(cur.num && cur.count) haHistWriteArchive(cur);
+            if(cur.num) {
+                if((haveDeclaredCount && declaredCount != cur.count) ||
+                   !haHistCommitLegacyArchive(cur)) {
+                    ok = false;
+                    break;
+                }
+                wroteArchive = true;
+            }
             cur = HaHistSession{};
             cur.archived = true;
-            unsigned long num = 0, ignoredCount = 0;
-            if(sscanf(line, "SESSION %lu %lu", &num, &ignoredCount) >= 1 && num > 0) {
-                cur.num = (uint32_t)num;
-                cur.seq = cur.num;
+            uint32_t num = 0, count = 0;
+            bool parsedCount = false;
+            if(!haHistParseLegacySessionHeader(line, num, count, parsedCount)) {
+                ok = false;
+                break;
             }
+            cur.num = num;
+            cur.seq = cur.num;
+            declaredCount = count;
+            haveDeclaredCount = parsedCount;
         } else if(cur.num && cur.count < HA_SESSION_MAX_PLAYERS) {
             HaHistPlayer p;
-            if(haHistParseLegacyPlayer(line, p)) cur.p[cur.count++] = p;
+            if(!haHistParseLegacyPlayer(line, p)) {
+                ok = false;
+                break;
+            }
+            cur.p[cur.count++] = p;
+        } else {
+            ok = false;
+            break;
         }
+        if(finalLine) break;
     }
-    if(lr == 0 && cur.num && cur.count) haHistWriteArchive(cur);
+    if(lr < 0) ok = false;
+    if(ok && cur.num) {
+        if((haveDeclaredCount && declaredCount != cur.count) ||
+           !haHistCommitLegacyArchive(cur))
+            ok = false;
+        else
+            wroteArchive = true;
+    }
     f.close();
-    haHistRefreshStats();
+    if(!ok) return false;
+    // Make the rebuildable cache reflect every verified immutable destination
+    // before preserving the source name. If power fails here, history.txt remains
+    // available and the whole transaction is safe to replay.
+    if(wroteArchive && (!haHistIndexRebuild() || !haHistRefreshStats())) return false;
+    return haHistPromoteLegacy(
+        HA_HIST_LEGACY_ARCHIVE,
+        HA_HIST_LEGACY_ARCHIVE_IMPORTED);
 }
 
 static bool haHistReadLegacyCurrent(HaHistSession& out) {
@@ -636,25 +1121,29 @@ static bool haHistReadLegacyCurrent(HaHistSession& out) {
     }
     char line[HA_HIST_LINE_MAX];
     int lr = haHistReadLine(f, line, sizeof(line));
-    bool ok = lr == 1 &&
-              strncmp(line, "CURRENT ", 8) == 0;
+    uint32_t declared = 0;
+    bool ok = lr == 1 && haHistParseLegacyCurrentHeader(line, declared);
     out = HaHistSession{};
-    while(ok && (lr = haHistReadLine(f, line, sizeof(line))) == 1) {
+    while(ok && ((lr = haHistReadLine(f, line, sizeof(line))) == 1 || lr == 2)) {
+        bool finalLine = lr == 2;
         if(!line[0]) continue;
         if(out.count >= HA_SESSION_MAX_PLAYERS) { ok = false; break; }
         HaHistPlayer p;
         if(!haHistParseLegacyPlayer(line, p)) { ok = false; break; }
         out.p[out.count++] = p;
+        if(finalLine) break;
     }
     if(lr < 0) ok = false;
     f.close();
-    if(!ok || !out.count) return false;
+    if(!ok || !out.count || out.count != declared) return false;
     haHistSort(out);
     return true;
 }
 
 static bool haHistSeqNewer(uint32_t a, uint32_t b) {
-    return (int32_t)(a - b) > 0;
+    // Durable generations never wrap: reusing a number could make an older A/B
+    // slot win after an interrupted write. Exhaustion is therefore a hard error.
+    return a > b;
 }
 
 static bool haHistWriteActive(const HaHistSession& source) {
@@ -668,13 +1157,14 @@ static bool haHistWriteActive(const HaHistSession& source) {
     uint8_t expectedCount = source.count;
     uint8_t expectedGameCount = source.gameCount;
     if(!haHistWriteRecord(path, source)) return false;
-    if(!haHistReadRecord(path, *haHistScratch, 0) ||
-       haHistScratch->num != expectedNum || haHistScratch->seq != expectedSeq ||
-       haHistScratch->restoredFrom != expectedRestoredFrom ||
-       haHistScratch->game != expectedGame || haHistScratch->count != expectedCount ||
-       haHistScratch->gameCount != expectedGameCount)
+    if(!haHistReadRecord(path, *haHistVerify, 0) ||
+       haHistVerify->num != expectedNum || haHistVerify->seq != expectedSeq ||
+       haHistVerify->restoredFrom != expectedRestoredFrom ||
+       haHistVerify->game != expectedGame || haHistVerify->count != expectedCount ||
+       haHistVerify->gameCount != expectedGameCount ||
+       !haHistSameRecord(source, *haHistVerify))
         return false;
-    haHistActive = *haHistScratch;
+    haHistActive = *haHistVerify;
     haHistRt.activeSlot = slot;
     haHistRt.resumeAvailable = haHistActive.count > 0;
     return true;
@@ -686,8 +1176,10 @@ static bool haHistBegin() {
     if(!haHistStorageBegin()) return false;
     if(!SD.exists(HA_HIST_DIR) && !SD.mkdir(HA_HIST_DIR)) return false;
     if(!SD.exists(HA_HIST_ARCHIVE_DIR) && !SD.mkdir(HA_HIST_ARCHIVE_DIR)) return false;
-    haHistRefreshStats();
-    haHistMigrateLegacyArchive();
+    if(!haHistRefreshStats()) return false;
+    bool migratedArchive = false;
+    if(!haHistMigrateLegacyArchive(migratedArchive)) return false;
+    (void)migratedArchive; // migration installs and verifies its index before rename
 
     uint32_t recoveryBaseSeq = 0;
     bool haveA = haHistReadRecord(HA_HIST_ACTIVE_A, haHistActive, 0);
@@ -700,30 +1192,48 @@ static bool haHistBegin() {
         // empty active slot landed, never resume that already-finished session.
         char archivedPath[64];
         haHistArchivePath(haHistActive.num, archivedPath, sizeof(archivedPath));
-        uint32_t expectedSeq = haHistActive.seq + 1;
-        if(!expectedSeq) expectedSeq = 1;
         bool alreadyArchived =
             haHistReadRecord(archivedPath, *haHistScratch, 1) &&
-            haHistScratch->num == haHistActive.num && haHistScratch->seq == expectedSeq;
+            haHistArchiveCommitsActive(*haHistScratch, haHistActive);
         if(alreadyArchived) recoveryBaseSeq = haHistScratch->seq;
         haHistRt.resumeAvailable = haHistActive.count > 0 && !alreadyArchived;
+        // The immutable rename may have landed just before power loss, leaving a
+        // structurally valid but stale cache. Rebuild before suppressing active A/B.
+        if(alreadyArchived && (!haHistIndexRebuild() || !haHistRefreshStats()))
+            return false;
+
+        // If power failed after importing current.txt into a verified active slot
+        // but before preserving the source name, finish that exact transaction now.
+        if(SD.exists(HA_HIST_LEGACY_CURRENT)) {
+            if(!haHistReadLegacyCurrent(*haHistVerify) ||
+               !haHistSameState(*haHistVerify, haHistActive) ||
+               !haHistPromoteLegacy(
+                   HA_HIST_LEGACY_CURRENT,
+                   HA_HIST_LEGACY_CURRENT_IMPORTED))
+                return false;
+        }
         if(!alreadyArchived) {
             haHistRt.begun = true;
             return true; // an empty active session is still current
         }
     }
-    if(!haveA && !haveB) haHistActive = HaHistSession{};
-
+    bool importedCurrent = false;
     *haHistScratch = HaHistSession{};
-    if(!haveA && !haveB) haHistReadLegacyCurrent(*haHistScratch);
+    if(!haveA && !haveB && SD.exists(HA_HIST_LEGACY_CURRENT)) {
+        if(!haHistReadLegacyCurrent(*haHistScratch)) return false;
+        importedCurrent = true;
+    }
     haHistScratch->num = haHistReserveNum();
     if(!haHistScratch->num) return false;
-    haHistScratch->seq = (haveA || haveB)
-                             ? (recoveryBaseSeq ? recoveryBaseSeq : haHistActive.seq) + 1
-                             : 1;
-    if(!haHistScratch->seq) haHistScratch->seq = 1;
+    uint32_t priorSeq = recoveryBaseSeq ? recoveryBaseSeq : haHistActive.seq;
+    if((haveA || haveB) && priorSeq == UINT32_MAX) return false;
+    haHistScratch->seq = (haveA || haveB) ? priorSeq + 1 : 1;
     haHistScratch->archived = false;
     if(!haHistWriteActive(*haHistScratch)) return false;
+    if(importedCurrent && !haHistPromoteLegacy(
+                              HA_HIST_LEGACY_CURRENT,
+                              HA_HIST_LEGACY_CURRENT_IMPORTED))
+        return false;
     haHistRt.begun = true;
     return true;
 }
@@ -736,12 +1246,12 @@ static bool haHistCheckpointPrepared(
     haHistScratch->restoredFrom = restoredFrom;
     haHistScratch->num = haHistActive.num ? haHistActive.num : haHistReserveNum();
     if(!haHistScratch->num) return false;
-    haHistScratch->seq = haHistActive.seq + 1;
-    if(!haHistScratch->seq) haHistScratch->seq = 1;
     haHistScratch->archived = false;
     if(!force && haHistActive.num == haHistScratch->num &&
        haHistSameState(haHistActive, *haHistScratch))
         return true;
+    if(haHistActive.seq == UINT32_MAX) return false;
+    haHistScratch->seq = haHistActive.seq + 1;
     return haHistWriteActive(*haHistScratch);
 }
 
@@ -757,6 +1267,20 @@ static bool haHistCheckpointRestored(const HaHost& host, uint32_t sourceNum) {
     return haHistCheckpointPrepared(host, true, sourceNum);
 }
 
+// Explicit discard path used only after the host confirms a second warning when
+// immutable archiving failed. The prior valid A/B slot remains recoverable until
+// this separately numbered empty active session is fully written and verified.
+[[maybe_unused]] static bool haHistStartNewActive(const HaHost& host) {
+    if(!haHistBegin() || haHistActive.seq == UINT32_MAX) return false;
+    haHistFromHost(host, *haHistScratch);
+    haHistScratch->num = haHistReserveNum();
+    if(!haHistScratch->num) return false;
+    haHistScratch->seq = haHistActive.seq + 1;
+    haHistScratch->restoredFrom = 0;
+    haHistScratch->archived = false;
+    return haHistWriteActive(*haHistScratch);
+}
+
 // UI compatibility wrapper: callers pass an already locked snapshot, so SD I/O is
 // never performed while ENGINE_LOCK is held.
 [[maybe_unused]] static bool haHistSaveCurrent(const HaHost& snapshot) {
@@ -767,37 +1291,50 @@ static bool haHistCheckpointRestored(const HaHost& host, uint32_t sourceNum) {
 // The caller should only reset engine/host scores after this returns true.
 static bool haHistArchive(const HaHost& host) {
     if(!haHistBegin()) return false;
+    // Checkpoint, immutable archive, and replacement active slot may each consume
+    // a generation. Fail before writing anything if all three cannot be unique.
+    if(haHistActive.seq > UINT32_MAX - 3U) return false;
+    // A prior call may already have committed the immutable archive and failed only
+    // while rebuilding the cache or advancing active A/B. Do not create another
+    // active generation in that case: exact equality below proves the retry instead.
     uint32_t currentNum = haHistActive.num ? haHistActive.num : haHistReserveNum();
     if(!currentNum) return false;
-    uint32_t finishedSeq = 0;
-    uint32_t expectedSeq = haHistActive.seq + 1;
-    if(!expectedSeq) expectedSeq = 1;
     char finalPath[64];
     haHistArchivePath(currentNum, finalPath, sizeof(finalPath));
-    if(SD.exists(finalPath)) {
+    bool recoveringArchive = SD.exists(finalPath);
+    if(!recoveringArchive) {
+        // Make active A/B exactly match the standings about to be archived. If power
+        // fails after rename, boot can prove equality before suppressing it.
+        if(!haHistCheckpoint(host, true)) return false;
+        currentNum = haHistActive.num;
+        haHistArchivePath(currentNum, finalPath, sizeof(finalPath));
+    }
+    uint32_t finishedSeq = 0;
+    uint32_t expectedSeq = haHistActive.seq + 1;
+    haHistFromHost(host, *haHistScratch);
+    if(!haHistScratch->count) return false;
+    haHistScratch->restoredFrom = haHistActive.restoredFrom;
+    haHistScratch->num = currentNum;
+    haHistScratch->seq = expectedSeq;
+    haHistScratch->archived = true;
+    if(recoveringArchive) {
         // Recovery for a prior call that committed the immutable archive but lost
         // power (or an SD write) while advancing the active slot.
-        if(!haHistReadRecord(finalPath, *haHistScratch, 1) ||
-           haHistScratch->num != currentNum || haHistScratch->seq != expectedSeq)
+        if(!haHistReadRecord(finalPath, *haHistVerify, 1) ||
+           !haHistSameRecord(*haHistScratch, *haHistVerify))
             return false;
-        finishedSeq = haHistScratch->seq;
+        finishedSeq = haHistVerify->seq;
     } else {
-        haHistFromHost(host, *haHistScratch);
-        if(!haHistScratch->count) return false;
-        haHistScratch->restoredFrom = haHistActive.restoredFrom;
-        haHistScratch->num = currentNum;
-        haHistScratch->seq = expectedSeq;
-        haHistScratch->archived = true;
         if(!haHistWriteArchive(*haHistScratch)) return false;
         finishedSeq = haHistScratch->seq;
     }
-    haHistRefreshStats();
+    if(!haHistIndexRebuild() || !haHistRefreshStats()) return false;
 
     *haHistScratch = HaHistSession{};
     haHistScratch->num = haHistReserveNum();
     if(!haHistScratch->num) return false;
+    if(finishedSeq == UINT32_MAX) return false;
     haHistScratch->seq = finishedSeq + 1;
-    if(!haHistScratch->seq) haHistScratch->seq = 1;
     haHistScratch->archived = false;
     return haHistWriteActive(*haHistScratch);
 }
@@ -826,89 +1363,61 @@ static HaHistSummary haHistSummary(const HaHistSession& s) {
     return out;
 }
 
-static void haHistInsertCandidate(
-    uint32_t* ids,
-    uint8_t& count,
-    uint8_t cap,
-    uint32_t num,
-    bool ascending) {
-    uint8_t pos = 0;
-    while(pos < count && (ascending ? ids[pos] < num : ids[pos] > num)) pos++;
-    if(pos >= cap) return;
-    uint8_t end = count < cap ? count : cap - 1;
-    for(int i = end; i > pos; i--) ids[i] = ids[i - 1];
-    ids[pos] = num;
-    if(count < cap) count++;
-}
-
-// `newer=false`: keep the largest ids below bound. `newer=true`: keep the smallest
-// ids above bound, then reverse them so every displayed page is newest first.
-static bool haHistCatalogLoadPage(bool newer, uint32_t bound) {
+static bool haHistCatalogLoadPage(uint32_t start, bool allowRebuild = true) {
     if(!haHistBegin()) return false;
     haHist.count = 0;
     haHist.hasNewer = false;
     haHist.hasOlder = false;
-    // Keep a few extra ids so a corrupt/torn archive does not blank an otherwise
-    // valid page. Only these candidates are opened and CRC-checked; catalog paging
-    // never reads every historical record into memory or from the card.
-    static const uint8_t CANDIDATE_MAX = HA_HIST_PAGE_MAX * 2;
-    uint32_t candidates[CANDIDATE_MAX];
-    uint8_t candidateCount = 0;
-    File dir = SD.open(HA_HIST_ARCHIVE_DIR);
-    if(!dir || !dir.isDirectory()) { if(dir) dir.close(); return false; }
-    File entry = dir.openNextFile();
-    while(entry) {
-        char name[96];
-        strlcpy(name, entry.name(), sizeof(name));
-        bool isDir = entry.isDirectory();
-        entry.close();
-        uint32_t num = 0;
-        bool eligible = !isDir && haHistParseArchiveName(name, num) &&
-                        (newer ? num > bound : num < bound);
-        if(eligible)
-            haHistInsertCandidate(
-                candidates,
-                candidateCount,
-                CANDIDATE_MAX,
-                num,
-                newer);
-        entry = dir.openNextFile();
-    }
-    dir.close();
-    if(newer) {
-        for(uint8_t i = 0; i < candidateCount / 2; i++) {
-            uint32_t tmp = candidates[i];
-            candidates[i] = candidates[candidateCount - 1 - i];
-            candidates[candidateCount - 1 - i] = tmp;
+    haHist.indexStart = start;
+    if(start >= haHist.total) return false;
+
+    File index = SD.open(HA_HIST_INDEX, FILE_READ);
+    HaHistIndexMeta meta = {};
+    bool ok = haHistIndexHeader(index, meta) && meta.count == haHist.total &&
+              index.seek(HA_HIST_INDEX_HEADER_BYTES +
+                         (size_t)start * sizeof(uint32_t));
+    while(ok && haHist.count < HA_HIST_PAGE_MAX &&
+          start + haHist.count < meta.count) {
+        uint32_t id = 0;
+        if(!haHistIndexReadId(index, id)) { ok = false; break; }
+        char path[64];
+        haHistArchivePath(id, path, sizeof(path));
+        if(!haHistReadRecord(path, *haHistScratch, 1) || haHistScratch->num != id) {
+            ok = false;
+            break;
         }
+        haHist.s[haHist.count++] = haHistSummary(*haHistScratch);
     }
-    for(uint8_t i = 0; i < candidateCount && haHist.count < HA_HIST_PAGE_MAX; i++) {
-        if(haHistLoadSession(candidates[i], *haHistScratch))
-            haHist.s[haHist.count++] = haHistSummary(*haHistScratch);
+    if(index) index.close();
+    if(!ok) {
+        haHist.count = 0;
+        if(!allowRebuild || !haHistIndexRebuild() || !haHistRefreshStats()) return false;
+        uint32_t retryStart = start < haHist.total ? start : 0;
+        return haHistCatalogLoadPage(retryStart, false);
     }
-    if(haHist.count) {
-        haHist.hasNewer = haHist.s[0].num < haHist.maxNum;
-        haHist.hasOlder = haHist.s[haHist.count - 1].num > haHist.minNum;
-    }
-    return haHist.count > 0;
+    haHist.hasNewer = start > 0;
+    haHist.hasOlder = start + haHist.count < haHist.total;
+    return haHist.count != 0;
 }
 
 static bool haHistCatalogNewest() {
     if(!haHistBegin()) return false;
-    haHistRefreshStats();
-    return haHistCatalogLoadPage(false, UINT32_MAX);
+    return haHistCatalogLoadPage(0);
 }
 
 static bool haHistCatalogOlder() {
     if(!haHistBegin()) return false;
     if(!haHist.count || !haHist.hasOlder) return false;
-    return haHistCatalogLoadPage(false, haHist.s[haHist.count - 1].num);
+    return haHistCatalogLoadPage(haHist.indexStart + haHist.count);
 }
 
 static bool haHistCatalogNewer() {
     if(!haHistBegin()) return false;
     if(!haHist.count || !haHist.hasNewer) return false;
-    return haHistCatalogLoadPage(true, haHist.s[0].num);
+    uint32_t start = haHist.indexStart > HA_HIST_PAGE_MAX
+                         ? haHist.indexStart - HA_HIST_PAGE_MAX
+                         : 0;
+    return haHistCatalogLoadPage(start);
 }
 
 static bool haHistResumeAvailable() {

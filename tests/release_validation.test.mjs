@@ -48,22 +48,51 @@ test('release packaging emits stable checksums and manifest', () => {
   writeFileSync(join(build, 'hotspot-arcade-cardputer.ino.bin'), 'app fixture');
   writeFileSync(join(build, 'hotspot-arcade-cardputer.full.bin'), 'full fixture');
   writeFileSync(join(build, 'hotspot-arcade-cardputer-m5burner.zip'), 'archive fixture');
-  writeFileSync(join(build, 'hotspot-arcade-cardputer.spdx.json'), '{}\n');
 
   const command = [join(root, 'tools', 'package-release.mjs'), '--artifacts-dir', build, '--tag', 'v0.6.0'];
-  execFileSync(process.execPath, command, { cwd: root, stdio: 'pipe' });
+  const options = { cwd: root, stdio: 'pipe', env: { ...process.env, SOURCE_DATE_EPOCH: '1700000000' } };
+  execFileSync(process.execPath, [join(root, 'tools', 'generate-sbom.mjs'), build], options);
+  execFileSync(process.execPath, command, options);
   const firstManifest = readFileSync(join(build, 'build-manifest.json'), 'utf8');
   const firstChecksums = readFileSync(join(build, 'SHA256SUMS'), 'utf8');
-  execFileSync(process.execPath, command, { cwd: root, stdio: 'pipe' });
+  execFileSync(process.execPath, command, options);
 
   assert.equal(readFileSync(join(build, 'build-manifest.json'), 'utf8'), firstManifest);
   assert.equal(readFileSync(join(build, 'SHA256SUMS'), 'utf8'), firstChecksums);
   const manifest = JSON.parse(firstManifest);
   assert.equal(manifest.repository, CANONICAL_REPOSITORY);
   assert.equal(manifest.version, '0.6.0');
+  assert.equal(manifest.sourceDateEpoch, 1700000000);
+  assert.equal(manifest.upstream.repository, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).repository);
+  assert.equal(manifest.upstream.sourceTreeSha256, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).sourceTreeSha256);
+  assert.equal(manifest.fqbn, JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'))).arduino.fqbn);
+  assert.equal(manifest.installLayouts.app.flashOffset, '0x170000');
+  assert.deepEqual(
+    manifest.installLayouts.m5burner.components.map((item) => item.flashOffset),
+    ['0x0', '0x8000', '0xe000', '0x10000'],
+  );
   assert.equal(manifest.artifacts.length, 4);
   assert.match(firstChecksums, /hotspot-arcade-cardputer\.full\.bin/);
   assert.match(firstChecksums, /build-manifest\.json/);
+});
+
+test('release metadata failure preserves the previous atomic outputs', () => {
+  const build = mkdtempSync(join(tmpdir(), 'hotspot-release-atomic-test-'));
+  for (const [name, content] of [
+    ['hotspot-arcade-cardputer.ino.bin', 'app fixture'],
+    ['hotspot-arcade-cardputer.full.bin', 'full fixture'],
+    ['hotspot-arcade-cardputer-m5burner.zip', 'archive fixture'],
+  ]) writeFileSync(join(build, name), content);
+  const command = [join(root, 'tools', 'package-release.mjs'), '--artifacts-dir', build, '--tag', 'v0.6.0'];
+  const options = { cwd: root, stdio: 'pipe', env: { ...process.env, SOURCE_DATE_EPOCH: '1700000000' } };
+  execFileSync(process.execPath, [join(root, 'tools', 'generate-sbom.mjs'), build], options);
+  execFileSync(process.execPath, command, options);
+  const manifest = readFileSync(join(build, 'build-manifest.json'), 'utf8');
+  const checksums = readFileSync(join(build, 'SHA256SUMS'), 'utf8');
+  writeFileSync(join(build, 'hotspot-arcade-cardputer.spdx.json'), '{}\n');
+  assert.throws(() => execFileSync(process.execPath, command, options));
+  assert.equal(readFileSync(join(build, 'build-manifest.json'), 'utf8'), manifest);
+  assert.equal(readFileSync(join(build, 'SHA256SUMS'), 'utf8'), checksums);
 });
 
 test('SPDX generation is deterministic at SOURCE_DATE_EPOCH', () => {
@@ -88,4 +117,39 @@ test('SPDX generation is deterministic at SOURCE_DATE_EPOCH', () => {
   assert.equal(spdx.files.length, 3);
   assert.ok(spdx.packages.some((entry) => entry.name === 'hotspot-arcade'));
   assert.ok(spdx.packages.some((entry) => entry.name === 'M5Cardputer'));
+  assert.ok(spdx.packages.some((entry) => entry.name === 'arduino-cli'));
+  assert.ok(spdx.packages.some((entry) => entry.name === 'esptool_py'));
+  assert.ok(spdx.packages.some((entry) => entry.name === 'AsyncTCP'));
+  const rootPackage = spdx.packages.find((entry) => entry.name === 'hotspot-arcade-cardputer');
+  assert.equal(rootPackage.supplier, 'Organization: Kaini Industries');
+  assert.match(rootPackage.packageVerificationCode.packageVerificationCodeValue, /^[0-9a-f]{40}$/);
+  execFileSync(process.execPath, [join(root, 'tools', 'validate-sbom.mjs'), build], options);
+
+  writeFileSync(join(build, 'hotspot-arcade-cardputer.ino.bin'), 'tampered app fixture');
+  assert.throws(() => execFileSync(process.execPath, [join(root, 'tools', 'validate-sbom.mjs'), build], options));
+});
+
+test('release metadata derives upstream repository provenance only from the strict lock', () => {
+  assert.doesNotMatch(readFileSync(join(root, 'tools', 'package-release.mjs'), 'utf8'), /github\.com\/tarikbc/);
+  assert.doesNotMatch(readFileSync(join(root, 'tools', 'generate-sbom.mjs'), 'utf8'), /github\.com\/tarikbc/);
+});
+
+test('workflows gate publication on isolated reproducibility and verified attestations', () => {
+  const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const release = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+  for (const workflow of [ci, release]) {
+    assert.equal((workflow.match(/git worktree add --detach/g) ?? []).length, 2);
+    assert.match(workflow, /release-hashes\.mjs/);
+    assert.match(workflow, /diff -u "\$RUNNER_TEMP\/first\.sha256" "\$RUNNER_TEMP\/second\.sha256"/);
+    assert.match(workflow, /tools\/test-native\.sh --tsan/);
+  }
+  assert.match(release, /\n  workflow_dispatch:\n/);
+  assert.match(release, /verify-build-provenance:/);
+  assert.match(release, /gh attestation verify/);
+  assert.match(release, /--signer-workflow/);
+  for (const job of ['draft-github-release', 'publish-m5burner', 'finalize-github-release']) {
+    const start = release.indexOf(`  ${job}:`);
+    assert.notEqual(start, -1);
+    assert.match(release.slice(start, start + 180), /if: github\.event_name == 'push'/);
+  }
 });

@@ -14,7 +14,14 @@
 #include <Arduino.h>
 #include <limits.h>
 #include <new>
-#include "ha_games.h"
+#include "ha_metadata.h"
+
+#ifndef HA_MAX_PLAYERS
+#define HA_MAX_PLAYERS 10
+#endif
+#ifndef HA_NICK_LEN
+#define HA_NICK_LEN 20
+#endif
 
 #define HA_EV_MAX 24 // console scrollback
 #define HA_EV_LEN 44 // fits the 240px screen at the 6px font
@@ -146,7 +153,7 @@ static inline void haHostSuspendConnections() {
 }
 
 static inline int haHostFindClient(const char* clientId) {
-    if(!clientId || !clientId[0]) return -1;
+    if(!haHostStorage || !clientId || !clientId[0]) return -1;
     for(uint8_t i = 0; i < HA_SESSION_MAX_PLAYERS; i++)
         if(haHost.session[i].used &&
            strcmp(haHost.session[i].clientId, clientId) == 0)
@@ -161,6 +168,25 @@ static inline bool haHostClientIdStable(const char* clientId) {
         if(!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
     }
     return true;
+}
+
+static inline bool haHostIdentityKnown(const char* clientId) {
+    return haHostFindClient(clientId) >= 0;
+}
+
+// Admission must reserve durable-ledger capacity before Engine allocates a PID.
+// Known identities never consume another row; a new identity is accepted only
+// while one of the bounded 32 session rows remains available.
+static inline bool haHostCanTrackIdentity(const char* clientId) {
+    if(!haHostStorage || !haHostClientIdStable(clientId)) return false;
+    return haHostIdentityKnown(clientId) || haHost.sessionCount < HA_SESSION_MAX_PLAYERS;
+}
+
+static inline bool haHostGameValid(uint8_t game, bool allowNone = false) {
+    if(game == HA_GAME_NONE) return allowNone;
+    for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++)
+        if(HA_GENERATED_GAMES[i].id == game && game != HA_GAME_NONE) return true;
+    return false;
 }
 
 // Compatibility fallback for the current protocol. Only an unambiguous,
@@ -272,6 +298,17 @@ static inline void haHostLeave(uint8_t pid) {
     haHostLog(line);
 }
 
+// A normal socket detach keeps the engine PID/game state reserved during grace,
+// but quorum and the host dashboard must reflect presence immediately.
+static inline void haHostSetOnline(uint8_t pid, bool online) {
+    if(!haHostStorage || pid < 1 || pid > HA_MAX_PLAYERS || !haHost.p[pid].used) return;
+    uint8_t si = haHost.p[pid].sessionIndex;
+    if(si >= HA_SESSION_MAX_PLAYERS || !haHost.session[si].used) return;
+    haHost.session[si].connected = online;
+    if(online) haHost.session[si].pid = pid;
+    haHostTouch();
+}
+
 static inline void haHostScore(uint8_t pid, int delta) {
     if(pid < 1 || pid > HA_MAX_PLAYERS || !haHost.p[pid].used) return;
     HaHostPlayer& live = haHost.p[pid];
@@ -344,6 +381,9 @@ static inline bool haHostImportSessionPlayer(
     const char* nick,
     int32_t score,
     const char* avatar) {
+    if(!haHostClientIdStable(clientId) || haHostFindClient(clientId) >= 0 ||
+       !nick || !nick[0])
+        return false;
     int si = haHostAllocSessionPlayer();
     if(si < 0) return false;
     HaHostSessionPlayer& p = haHost.session[si];
@@ -365,7 +405,7 @@ static inline bool haHostImportSessionPlayer(
 }
 
 static inline bool haHostImportSessionGamePlay(uint8_t game, uint16_t count) {
-    if(!haHostStorage || game == HA_GAME_NONE || !count) return false;
+    if(!haHostStorage || !haHostGameValid(game) || !count) return false;
     int index = haHostFindGamePlay(haHost, game);
     if(index < 0) {
         if(haHost.gameCount >= HA_SESSION_GAME_STATS_MAX) return false;
@@ -377,6 +417,7 @@ static inline bool haHostImportSessionGamePlay(uint8_t game, uint16_t count) {
 }
 
 static inline void haHostImportSessionGame(uint8_t game) {
+    if(!haHostStorage || !haHostGameValid(game, true)) return;
     haHost.activeGame = game;
     haHostTouch();
 }
@@ -394,5 +435,13 @@ static inline int haHostPlayerCount() {
 }
 
 static inline int haHostSessionPlayerCount() {
-    return haHost.sessionCount;
+    return haHostStorage ? haHost.sessionCount : 0;
+}
+
+static inline int haHostOnlineSessionPlayerCount() {
+    if(!haHostStorage) return 0;
+    int count = 0;
+    for(uint8_t i = 0; i < HA_SESSION_MAX_PLAYERS; i++)
+        if(haHost.session[i].used && haHost.session[i].connected) count++;
+    return count;
 }

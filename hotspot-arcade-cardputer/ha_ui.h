@@ -10,18 +10,22 @@
 #include "ha_host.h"
 #include "ha_history.h"
 #include "ha_metadata.h"
+#include "ha_diagnostics.h"
+#include "ha_network_policy.h"
 
 // ---- implemented in the .ino (they touch the engine / WiFi under the lock) ----
 void haHostSelectGame(uint8_t game);
-void haHostResetScores();
+bool haHostResetScores(bool discardOnArchiveFailure = false);
 void haHostRoundEnd();
 void haHostCheckpoint();
 void haHostApplySsid(const char* ssid);
 void haHostTogglePortal();
 void haCfgSave(); // persist SSID/audio/language to the redundant config stores
 const char* haHostSsid();
+const char* haHostJoinCode();
 String haHostIp();
 void haHostSnapshot(HaHost& dst);
+void haHostDiagnosticsSnapshot(HaDiagnostics& dst);
 
 // Game/language metadata is generated from tools/content-manifest.json. The UI is
 // therefore capacity-safe when a new game id is added; nothing indexes a fixed
@@ -46,7 +50,9 @@ enum HaUiView {
     HA_VIEW_CONSOLE,
     HA_VIEW_SSID,
     HA_VIEW_SETTINGS,
-    HA_VIEW_RESET_CONFIRM
+    HA_VIEW_DIAGNOSTICS,
+    HA_VIEW_RESET_CONFIRM,
+    HA_VIEW_RESET_DISCARD_CONFIRM
 };
 
 // Audio level (0 off / 1 low / 2 high) lives in the .ino (the speaker jingles are
@@ -69,7 +75,7 @@ struct HaLanguageNameTable {
 static const HaLanguageCodeTable HA_LANG_CODE;
 static const HaLanguageNameTable HA_LANG_NAME;
 
-#define HA_SET_COUNT 5 // settings rows: SSID, Audio, Language, AP, Event log
+#define HA_SET_COUNT 6 // SSID, Audio, Language, AP, Event log, Diagnostics
 
 static M5Canvas* haUiCanvasStorage = nullptr;
 #define haUiCanvas (*haUiCanvasStorage)
@@ -83,6 +89,7 @@ static int haGamesOrder[HA_UI_GAME_COUNT]; // display order, filled per sort mod
 static HaHistSession* haUiHistDetailStorage = nullptr;
 #define haUiHistDetail (*haUiHistDetailStorage)
 static bool haUiRestoreFailed = false;
+static bool haUiResetFailed = false;
 static HaUiView haUiSettingsReturn = HA_VIEW_SETTINGS;
 static HaUiView haUiResetReturn = HA_VIEW_DASH;
 static HaHost* haUiSnapStorage = nullptr; // locked copy; never touched by AsyncTCP
@@ -238,29 +245,40 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
     g->setTextFont(1);
     g->setTextSize(1);
 
-    // Line 1: SSID + the join URL, on one line.
+    // Network line: bounded SSID and captive address.
     char line[80];
     g->setTextColor(haUiSnap.portalRunning ? TFT_GREEN : TFT_RED, TFT_BLACK);
-    snprintf(line, sizeof(line), "%s  http://%s", haHostSsid(), haHostIp().c_str());
+    snprintf(line, sizeof(line), "%.18s  %s", haHostSsid(), haHostIp().c_str());
     g->drawString(line, 3, 15);
 
-    // Line 2: active game + player count.
+    // Party admission code is the most prominent host value.
+    g->setTextColor(HA_ORANGE, TFT_BLACK);
+    g->drawString("JOIN", 3, 30);
+    g->setTextSize(2);
+    g->drawString(haHostJoinCode(), 31, 25);
+    g->setTextSize(1);
+
     uint8_t order[HA_MAX_PLAYERS + 1];
     int n = haUiSorted(order);
+    int online = 0;
+    for(uint8_t i = 0; i < HA_SESSION_MAX_PLAYERS; i++)
+        if(haUiSnap.session[i].used && haUiSnap.session[i].connected) online++;
+    int offline = haUiSnap.sessionCount > online ? haUiSnap.sessionCount - online : 0;
+    const char* storage = !haSdOk ? "NVS" :
+                          (haHistStorageReady() ? "SD OK" : "SD ERR");
     g->setTextColor(TFT_WHITE, TFT_BLACK);
+    snprintf(line, sizeof(line), "%s  %d on/%d off", storage, online, offline);
+    g->drawString(line, 132, 30);
     snprintf(line, sizeof(line), "Game: %s", haUiGameLabel(haUiSnap.activeGame));
-    g->drawString(line, 3, 27);
-    char pl[20]; // players pinned to the right edge so the two never crowd
-    snprintf(pl, sizeof(pl), "Players: %d", n);
-    g->drawString(pl, HA_UI_W - 6 * (int)strlen(pl) - 3, 27);
+    g->drawString(line, 3, 45);
 
-    g->drawFastHLine(0, 38, HA_UI_W, TFT_DARKGREY);
+    g->drawFastHLine(0, 56, HA_UI_W, TFT_DARKGREY);
 
     if(n == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("waiting for phones to join...", 3, 46);
+        g->drawString("waiting for phones to join...", 3, 63);
     } else {
-        haUiDrawScoreCols(g, order, n, 44, 5); // 2 columns x 5 = up to 10
+        haUiDrawScoreCols(g, order, n, 60, 5); // 2 columns x 5 = up to 10
         if(n > 10) {
             g->setTextColor(TFT_DARKGREY, TFT_BLACK);
             snprintf(line, sizeof(line), "+%d more", n - 10);
@@ -274,7 +292,7 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
         g->setTextColor(HA_ORANGE, TFT_BLACK);
         g->drawString(haUiSnap.lastEvent, 3, HA_UI_H - 22);
     }
-    haUiFooter(g, "G game L board H history S settings");
+    haUiFooter(g, "G game L board H history D diagnostics");
 }
 
 #define HA_GAMES_ROW 16 // px per game row at text size 2
@@ -463,6 +481,22 @@ static void haUiDrawResetConfirm(lgfx::LovyanGFX* g) {
     haUiFooter(g, "Y confirm   ESC cancel");
 }
 
+static void haUiDrawResetDiscardConfirm(lgfx::LovyanGFX* g) {
+    haUiHeader(g, "ARCHIVE FAILED");
+    g->setTextSize(2);
+    g->setTextColor(TFT_RED, TFT_BLACK);
+    g->drawString("Discard scores?", 12, 25);
+    g->setTextSize(1);
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    g->drawString("The active session could not be archived.", 8, 54);
+    g->drawString("A second Y permanently discards it.", 8, 67);
+    if(haUiResetFailed) {
+        g->setTextColor(TFT_RED, TFT_BLACK);
+        g->drawString("Reset failed; active play is unchanged.", 8, 83);
+    }
+    haUiFooter(g, "Y DISCARD   ESC keep session");
+}
+
 // One option of a multi-choice setting (audio off/low/high, AP on/off). The current
 // choice is filled -- orange on the selected (editable) row, grey otherwise; the rest
 // are outlined. Returns the x just past the pill, so options tile left to right.
@@ -507,8 +541,9 @@ static void haUiValPill(lgfx::LovyanGFX* g, int x, int y, const char* txt, bool 
 static void haUiDrawSettings(lgfx::LovyanGFX* g) {
     haUiHeader(g, "SETTINGS");
     g->setTextSize(1);
-    const int VALX = 92, y0 = 20, rowH = 20;
-    const char* labels[HA_SET_COUNT] = {"SSID", "Audio", "Language", "Access Point", "Event log"};
+    const int VALX = 92, y0 = 16, rowH = 17;
+    const char* labels[HA_SET_COUNT] = {
+        "SSID", "Audio", "Language", "Access Point", "Event log", "Diagnostics"};
     for(int i = 0; i < HA_SET_COUNT; i++) {
         bool sel = (i == haUiCursor);
         int y = y0 + i * rowH;
@@ -539,9 +574,54 @@ static void haUiDrawSettings(lgfx::LovyanGFX* g) {
         case 4: // Event log -- opens a sub-screen
             haUiValPill(g, cx, y, "GO >", sel, false);
             break;
+        case 5: // Diagnostics -- opens a sub-screen
+            haUiValPill(g, cx, y, "GO >", sel, false);
+            break;
         }
     }
     haUiFooter(g, ";/. move   ,// change   ENTER open   ESC back");
+}
+
+static void haUiDrawDiagnostics(lgfx::LovyanGFX* g) {
+    HaDiagnostics d{};
+    haHostDiagnosticsSnapshot(d);
+    haUiHeader(g, "DIAGNOSTICS");
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    char line[48];
+    snprintf(line, sizeof(line), "heap %lu min %lu block %lu",
+             (unsigned long)d.freeHeap,
+             (unsigned long)d.minFreeHeap,
+             (unsigned long)d.largestFreeBlock);
+    g->drawString(line, 3, 15);
+    snprintf(line, sizeof(line), "ws %u auth %u pending %u qmax %u",
+             (unsigned)d.wsObjects,
+             (unsigned)d.wsAuthenticated,
+             (unsigned)d.wsPending,
+             (unsigned)d.maxSocketQueue);
+    g->drawString(line, 3, 27);
+    snprintf(line, sizeof(line), "rate ctl %lu draw %lu chat %lu emoji %lu",
+             (unsigned long)d.rateRejected[HaInboundGeneral],
+             (unsigned long)d.rateRejected[HaInboundDraw],
+             (unsigned long)d.rateRejected[HaInboundChat],
+             (unsigned long)d.rateRejected[HaInboundEmoji]);
+    g->drawString(line, 3, 39);
+    snprintf(line, sizeof(line), "flow coalesce %lu drop %lu close %lu",
+             (unsigned long)d.outputCoalesced,
+             (unsigned long)d.streamDropped,
+             (unsigned long)d.overloadCloses);
+    g->drawString(line, 3, 51);
+    snprintf(line, sizeof(line), "loop %lums lock %luus sound drop %lu",
+             (unsigned long)d.maxLoopGapMs,
+             (unsigned long)d.maxEngineLockUs,
+             (unsigned long)d.soundDropped);
+    g->drawString(line, 3, 63);
+    snprintf(line, sizeof(line), "SD failures %lu checkpoint %lu",
+             (unsigned long)d.sdFailures,
+             (unsigned long)d.checkpointGeneration);
+    g->drawString(line, 3, 75);
+    g->setTextColor(TFT_DARKGREY, TFT_BLACK);
+    g->drawString("Values are high-water marks since boot.", 3, 91);
+    haUiFooter(g, "ESC back");
 }
 
 static void haUiDrawConsole(lgfx::LovyanGFX* g) {
@@ -622,8 +702,14 @@ static void haUiDraw(bool snapshot = true) {
     case HA_VIEW_SETTINGS:
         haUiDrawSettings(g);
         break;
+    case HA_VIEW_DIAGNOSTICS:
+        haUiDrawDiagnostics(g);
+        break;
     case HA_VIEW_RESET_CONFIRM:
         haUiDrawResetConfirm(g);
+        break;
+    case HA_VIEW_RESET_DISCARD_CONFIRM:
+        haUiDrawResetDiscardConfirm(g);
         break;
     default:
         haUiDrawDash(g);
@@ -658,6 +744,7 @@ static void haUiBack() {
     switch(haUiView) {
     case HA_VIEW_SSID:
     case HA_VIEW_CONSOLE:
+    case HA_VIEW_DIAGNOSTICS:
         haUiOpen(haUiSettingsReturn);
         break;
     case HA_VIEW_HISTORY_DETAIL:
@@ -671,6 +758,7 @@ static void haUiBack() {
         haUiForce = true;
         break;
     case HA_VIEW_RESET_CONFIRM:
+    case HA_VIEW_RESET_DISCARD_CONFIRM:
         haUiOpen(haUiResetReturn);
         break;
     default:
@@ -729,8 +817,25 @@ static void haUiChar(char c) {
     if(haUiView == HA_VIEW_RESET_CONFIRM) {
         if(c == '`') haUiBack();
         else if(c == 'y' || c == 'Y') {
-            haHostResetScores();
-            haUiOpen(HA_VIEW_BOARD);
+            if(haHostResetScores(false)) {
+                haUiOpen(HA_VIEW_BOARD);
+            } else {
+                haUiResetFailed = false;
+                haUiView = HA_VIEW_RESET_DISCARD_CONFIRM;
+                haUiForce = true;
+            }
+        }
+        return;
+    }
+    if(haUiView == HA_VIEW_RESET_DISCARD_CONFIRM) {
+        if(c == '`') haUiBack();
+        else if(c == 'y' || c == 'Y') {
+            if(haHostResetScores(true)) {
+                haUiOpen(HA_VIEW_BOARD);
+            } else {
+                haUiResetFailed = true;
+                haUiForce = true;
+            }
         }
         return;
     }
@@ -808,6 +913,13 @@ static void haUiChar(char c) {
         haUiScroll = 0;
         haUiForce = true;
         return;
+    case 'd':
+    case 'D':
+        haUiSettingsReturn = haUiView == HA_VIEW_SETTINGS ? HA_VIEW_SETTINGS : HA_VIEW_DASH;
+        haUiView = HA_VIEW_DIAGNOSTICS;
+        haUiScroll = 0;
+        haUiForce = true;
+        return;
     case 'n':
     case 'N':
         haUiSettingsReturn = haUiView == HA_VIEW_SETTINGS ? HA_VIEW_SETTINGS : HA_VIEW_DASH;
@@ -834,6 +946,7 @@ static void haUiChar(char c) {
     case 'r':
     case 'R':
         haUiResetReturn = haUiView == HA_VIEW_BOARD ? HA_VIEW_BOARD : HA_VIEW_DASH;
+        haUiResetFailed = false;
         haUiView = HA_VIEW_RESET_CONFIRM;
         haUiForce = true;
         return;
@@ -892,6 +1005,11 @@ static void haUiEnter() {
         case 4: // Event log
             haUiSettingsReturn = HA_VIEW_SETTINGS;
             haUiView = HA_VIEW_CONSOLE;
+            haUiScroll = 0;
+            break;
+        case 5: // Diagnostics
+            haUiSettingsReturn = HA_VIEW_SETTINGS;
+            haUiView = HA_VIEW_DIAGNOSTICS;
             haUiScroll = 0;
             break;
         }

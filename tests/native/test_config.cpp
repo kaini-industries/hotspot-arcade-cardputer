@@ -18,20 +18,21 @@ static void resetAll() {
 static void testAlternatingAndRecovery() {
     resetAll();
     assert(haConfigBegin("Hotspot Arcade", 1, 0));
-    assert(haConfigSave("Party One", 2, 1));
-    assert(SD.exists(HA_CONFIG_A));
     assert(haConfigGet().generation == 1);
-    assert(haConfigSave("Party Two", 0, 0));
+    assert(SD.exists(HA_CONFIG_A));
+    assert(haConfigSave("Party One", 2, 1));
     assert(SD.exists(HA_CONFIG_B));
     assert(haConfigGet().generation == 2);
+    assert(haConfigSave("Party Two", 0, 0));
+    assert(haConfigGet().generation == 3);
 
     // A corrupted newest slot must leave the previous verified slot usable.
-    SD.files[HA_CONFIG_B][10] ^= 0x01;
+    SD.files[HA_CONFIG_A][10] ^= 0x01;
     Preferences::reset();
     resetRuntime();
     assert(haConfigBegin("default", 1, 0));
     assert(std::strcmp(haConfigGet().ssid, "Party One") == 0);
-    assert(haConfigGet().generation == 1);
+    assert(haConfigGet().generation == 2);
 }
 
 static void testNvsGenerationResolution() {
@@ -42,13 +43,20 @@ static void testNvsGenerationResolution() {
     assert(haConfigWriteNvs(nvs));
     assert(haConfigBegin("default", 1, 0));
     assert(std::strcmp(haConfigGet().ssid, "NVS") == 0);
+    HaConfigRecord repaired = {};
+    assert(haConfigReadSd(HA_CONFIG_B, repaired));
+    assert(haConfigSame(repaired, nvs));
 
     // SD wins a same-generation conflict.
+    resetAll();
+    assert(haConfigWriteSd(HA_CONFIG_A, sd));
     resetRuntime();
     nvs.generation = 7;
     assert(haConfigWriteNvs(nvs));
     assert(haConfigBegin("default", 1, 0));
     assert(std::strcmp(haConfigGet().ssid, "SD") == 0);
+    assert(haConfigReadNvs(repaired));
+    assert(haConfigSame(repaired, sd));
 }
 
 static void testEveryInterruptedWriteKeepsOldGeneration() {
@@ -59,7 +67,7 @@ static void testEveryInterruptedWriteKeepsOldGeneration() {
     const auto baseNvs = Preferences::storage;
     Preferences::failWrites = true;
     assert(haConfigSave("interrupted", 2, 1)); // SD succeeds; learn the exact record length.
-    const long completeLength = (long)SD.files.at(HA_CONFIG_B).size();
+    const long completeLength = (long)SD.files.at(HA_CONFIG_A).size();
     Preferences::failWrites = false;
 
     for(long cut = 0; cut < completeLength; cut++) {
@@ -80,8 +88,27 @@ static void testEveryInterruptedWriteKeepsOldGeneration() {
                       << haConfigGet().generation << "\n";
             std::abort();
         }
-        assert(haConfigGet().generation == 1);
+        assert(haConfigGet().generation == 2);
     }
+}
+
+static void testMirrorRetryAndGenerationExhaustion() {
+    resetAll();
+    HaConfigRecord sd = {9, "Mirror Me", 2, 1};
+    assert(haConfigWriteSd(HA_CONFIG_A, sd));
+    Preferences::failWrites = true;
+    assert(haConfigBegin("default", 1, 0));
+    assert(haConfigRt.nvsDirty);
+    Preferences::failWrites = false;
+    assert(haConfigRepairMirrors());
+    assert(!haConfigRt.nvsDirty);
+    HaConfigRecord mirrored = {};
+    assert(haConfigReadNvs(mirrored));
+    assert(haConfigSame(mirrored, sd));
+
+    haConfigRt.value.generation = UINT32_MAX;
+    assert(!haConfigSave("cannot-wrap", 1, 0));
+    assert(haConfigGet().generation == UINT32_MAX);
 }
 
 static void testLegacyMigrationIsIdempotent() {
@@ -118,6 +145,7 @@ int main() {
     testNvsGenerationResolution();
     testEveryInterruptedWriteKeepsOldGeneration();
     testLegacyMigrationIsIdempotent();
+    testMirrorRetryAndGenerationExhaustion();
     testBoundsAndValidation();
     std::cout << "native config tests passed\n";
 }

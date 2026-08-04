@@ -26,6 +26,7 @@ DATA_DIR="$($ARDUINO_CLI --config-file "$CONFIG" config get directories.data)"
 BOOT_RELATIVE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["relativeToData"])' "$LOCK")"
 BOOT_EXPECTED_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["sha256"])' "$LOCK")"
 BOOT_EXPECTED_SIZE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["size"])' "$LOCK")"
+CORE_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["core"]["version"])' "$LOCK")"
 BOOT_APP0="$DATA_DIR/$BOOT_RELATIVE"
 [[ -s "$BOOT_APP0" ]] || { echo "locked boot_app0.bin is missing: $BOOT_APP0" >&2; exit 2; }
 [[ "$(wc -c < "$BOOT_APP0" | tr -d ' ')" == "$BOOT_EXPECTED_SIZE" ]] || { echo "boot_app0.bin size does not match lock" >&2; exit 2; }
@@ -36,8 +37,8 @@ else
 fi
 [[ "$BOOT_ACTUAL_SHA" == "$BOOT_EXPECTED_SHA" ]] || { echo "boot_app0.bin hash does not match lock" >&2; exit 2; }
 if ! "$ARDUINO_CLI" --config-file "$CONFIG" core list | awk \
-  '$1 == "esp32:esp32" && $2 == "3.3.11" { found = 1 } END { exit !found }'; then
-  echo "project-local esp32:esp32@3.3.11 is not installed" >&2
+  -v expected="$CORE_VERSION" '$1 == "esp32:esp32" && $2 == expected { found = 1 } END { exit !found }'; then
+  echo "project-local esp32:esp32@$CORE_VERSION is not installed" >&2
   exit 2
 fi
 
@@ -46,11 +47,13 @@ node tools/validate-images.mjs --build "$SRC" --boot-app "$BOOT_APP0"
 mkdir -p "$ROOT/firmware" "$ROOT/.cache"
 STAGE="$(mktemp -d "$ROOT/firmware/.cardputer-stage.XXXXXX")"
 ARCHIVE_STAGE="$(mktemp -d "$ROOT/.cache/m5archive.XXXXXX")"
-BACKUP="$ROOT/firmware/.cardputer-previous.$$"
-ARCHIVE_BACKUP="$ROOT/.cache/m5archive-previous.$$"
+ROLLBACK="$(mktemp -d "$ROOT/.cache/m5rollback.XXXXXX")"
+BACKUP="$ROLLBACK/cardputer"
+ARCHIVE_BACKUP="$ROLLBACK/archive.zip"
 cleanup() {
   if [[ -n "${STAGE:-}" && -d "$STAGE" ]]; then rm -rf "$STAGE"; fi
   if [[ -n "${ARCHIVE_STAGE:-}" && -d "$ARCHIVE_STAGE" ]]; then rm -rf "$ARCHIVE_STAGE"; fi
+  if [[ -n "${ROLLBACK:-}" && -d "$ROLLBACK" ]]; then rm -rf "$ROLLBACK"; fi
 }
 trap cleanup EXIT
 
@@ -68,6 +71,11 @@ ARCHIVE_NEW="$ARCHIVE_STAGE/hotspot-arcade-cardputer-m5burner.zip"
     boot_app0_0xe000.bin \
     hotspot-arcade_0x10000.bin
 )
+python3 tools/validate_m5_package.py \
+  --build "$SRC" \
+  --components "$STAGE" \
+  --archive "$ARCHIVE_NEW" \
+  --boot-app "$BOOT_APP0"
 
 had_out=false
 had_archive=false

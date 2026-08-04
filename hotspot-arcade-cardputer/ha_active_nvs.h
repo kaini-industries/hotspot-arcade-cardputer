@@ -15,6 +15,7 @@
 #include <limits.h>
 #include <new>
 #include <stddef.h>
+#include "ha_metadata.h"
 
 #ifndef HA_CLIENT_ID_LEN
 #define HA_CLIENT_ID_LEN 33
@@ -166,10 +167,18 @@ static bool haActiveNvsUtf8Valid(const char* value, size_t capacity, bool allowE
     return true;
 }
 
+static bool haActiveNvsGameValid(uint8_t game, bool allowNone) {
+    if(game == HA_GAME_NONE) return allowNone;
+    for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++)
+        if(HA_GENERATED_GAMES[i].id == game && game != HA_GAME_NONE) return true;
+    return false;
+}
+
 // Validate only the logical payload. A freshly captured record may have generation
 // zero; storage assigns a monotonic generation immediately before sealing it.
 static bool haActiveNvsPayloadValid(const HaActiveNvsRecord& record) {
-    if(!record.sessionNumber || record.participantCount > HA_ACTIVE_NVS_MAX_PLAYERS ||
+    if(!record.sessionNumber || !haActiveNvsGameValid(record.activeGame, true) ||
+       record.participantCount > HA_ACTIVE_NVS_MAX_PLAYERS ||
        record.gameCount > HA_ACTIVE_NVS_MAX_GAME_COUNTS || record.reserved != 0)
         return false;
     for(uint8_t i = 0; i < record.participantCount; i++) {
@@ -184,7 +193,7 @@ static bool haActiveNvsPayloadValid(const HaActiveNvsRecord& record) {
     }
     for(uint8_t i = 0; i < record.gameCount; i++) {
         const HaActiveNvsGameCount& game = record.games[i];
-        if(game.game == 0 || game.count == 0) return false;
+        if(!haActiveNvsGameValid(game.game, false) || game.count == 0) return false;
         for(uint8_t prior = 0; prior < i; prior++)
             if(game.game == record.games[prior].game) return false;
     }
@@ -409,6 +418,11 @@ static void haActiveNvsResetCheckpointRateLimit() {
     haActiveNvsRt = HaActiveNvsRuntime{};
 }
 
+static void haActiveNvsSetCheckpointBaseline(uint32_t now) {
+    haActiveNvsRt.checkpointed = true;
+    haActiveNvsRt.lastCheckpointMs = now;
+}
+
 // Build the narrow persistence record from a HaHost-compatible snapshot without
 // including ha_host.h here. Keeping this a template lets native tests use a small
 // structural stub and avoids forcing the full game engine into persistence-only TUs.
@@ -473,5 +487,28 @@ static HaActiveNvsCheckpointResult haActiveNvsCheckpointNoSd(
         return HaActiveNvsCheckpointFailed;
     haActiveNvsRt.checkpointed = true;
     haActiveNvsRt.lastCheckpointMs = now;
+    return HaActiveNvsCheckpointWritten;
+}
+
+// Mirror a verified SD active record without inventing a second generation. The
+// two media then describe one logical commit and SD wins their intentional tie at
+// boot. An equal-generation record is replaced as well: equal but divergent media
+// are resolved in SD's favor, so leaving the old NVS payload would not be a repair.
+[[maybe_unused]] static HaActiveNvsCheckpointResult haActiveNvsCheckpointSdMirror(
+    const HaActiveNvsRecord& snapshot,
+    uint32_t now,
+    bool force = false) {
+    if(!haActiveNvsRecordValid(snapshot)) return HaActiveNvsCheckpointInvalid;
+    if(!haActiveNvsCheckpointDue(now, force)) return HaActiveNvsCheckpointDeferred;
+
+    uint32_t current = 0;
+    bool haveCurrent = haActiveNvsLatestGeneration(current);
+    if(haveCurrent && current > snapshot.generation)
+        return HaActiveNvsCheckpointInvalid;
+    if(haveCurrent && current == snapshot.generation && !haActiveNvsErase())
+        return HaActiveNvsCheckpointFailed;
+    if(!haActiveNvsWriteGeneration(snapshot, snapshot.generation))
+        return HaActiveNvsCheckpointFailed;
+    haActiveNvsSetCheckpointBaseline(now);
     return HaActiveNvsCheckpointWritten;
 }
