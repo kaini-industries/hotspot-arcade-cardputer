@@ -32,7 +32,11 @@ static void haTrimTo(const char* s, const char* e, String& out, bool lower = fal
     }
 }
 
-static void haContentLoadPack(Engine& engine, uint8_t game, const char* text, const char* fallback) {
+static uint16_t haContentLoadPack(
+    Engine& engine,
+    uint8_t game,
+    const char* text,
+    const char* fallback) {
     // Pass one: the pack name, so contentPack() goes first (it opens the pack the
     // items then attach to).
     String name = fallback;
@@ -53,6 +57,7 @@ static void haContentLoadPack(Engine& engine, uint8_t game, const char* text, co
     String obj = "{";
     String key, val;
     bool any = false;
+    uint16_t itemCount = 0;
     for(const char* p = text; p && *p;) {
         const char* eol = strchr(p, '\n');
         if(!eol) eol = p + strlen(p);
@@ -67,6 +72,7 @@ static void haContentLoadPack(Engine& engine, uint8_t game, const char* text, co
             if(any) {
                 obj += "}";
                 engine.contentItem(obj.c_str());
+                if(itemCount != UINT16_MAX) itemCount++;
             }
             obj = "{";
             any = false;
@@ -91,7 +97,9 @@ static void haContentLoadPack(Engine& engine, uint8_t game, const char* text, co
     if(any) { // a file that ends without a trailing separator
         obj += "}";
         engine.contentItem(obj.c_str());
+        if(itemCount != UINT16_MAX) itemCount++;
     }
+    return itemCount;
 }
 
 // Stream the baked packs for one language into the engine. The generator caps each
@@ -102,9 +110,11 @@ static void haContentLoadPack(Engine& engine, uint8_t game, const char* text, co
 // game, or lang="en" which every game has) streams its English packs instead. So a
 // partially translated language still plays -- translated games come up localized,
 // the rest stay English. Called at boot and again whenever Settings changes language.
-static void haContentLoadAll(Engine& engine, const char* lang) {
+static bool haContentLoadAll(Engine& engine, const char* lang) {
     engine.contentClear();
     bool hasLang[64] = {false}; // game id -> does the selected language cover it?
+    uint16_t packCount = 0;
+    uint16_t itemCount = 0;
     for(size_t i = 0; i < HA_BAKED_PACK_COUNT; i++) {
         const HaBakedPack& bp = HA_BAKED_PACKS[i];
         if(bp.game < 64 && strcmp(bp.lang, lang) == 0) hasLang[bp.game] = true;
@@ -113,6 +123,20 @@ static void haContentLoadAll(Engine& engine, const char* lang) {
         const HaBakedPack& bp = HA_BAKED_PACKS[i];
         const char* want = (bp.game < 64 && hasLang[bp.game]) ? lang : "en";
         if(strcmp(bp.lang, want) != 0) continue;
-        haContentLoadPack(engine, bp.game, bp.text, bp.fallback);
+        if(packCount != UINT16_MAX) packCount++;
+        uint16_t loaded = haContentLoadPack(engine, bp.game, bp.text, bp.fallback);
+        if((uint32_t)itemCount + loaded > UINT16_MAX) itemCount = UINT16_MAX;
+        else itemCount = (uint16_t)(itemCount + loaded);
     }
+    // Protocol v18 stages both content and locale until the checked commit. Older
+    // engines load directly, so the same call remains source-compatible while the
+    // reviewed upstream is being synchronized.
+    engine.setLang(lang);
+#if HA_FW_VERSION >= 18
+    return engine.contentCommit(packCount, itemCount);
+#else
+    (void)packCount;
+    (void)itemCount;
+    return true;
+#endif
 }

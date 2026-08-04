@@ -4,8 +4,8 @@
 
 # Hotspot Arcade — M5Stack Cardputer
 
-[![build](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml/badge.svg)](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/github/v/release/genkigenki/hotspot-arcade-cardputer?sort=semver)](https://github.com/genkigenki/hotspot-arcade-cardputer/releases/latest)
+[![build](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml/badge.svg)](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml)
+[![latest release](https://img.shields.io/github/v/release/kaini-industries/hotspot-arcade-cardputer?sort=semver)](https://github.com/kaini-industries/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Several offline party games your guests play from their phones. The Cardputer opens a WiFi
@@ -17,8 +17,10 @@ scoreboard, event log.
   <img src="docs/img/photo-2.jpg" alt="Cardputer hosting a round while a phone votes on a Would You Rather pack" width="820">
 </p>
 
-This is a **host port** of [tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade),
-which runs the same games as a Flipper Zero app.
+This Kaini Industries-maintained edition is a **host port** of
+[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade), which runs
+the same games as a Flipper Zero app. The Cardputer port was originally created
+by genkigenki; Kaini Industries maintains and releases this repository.
 
 If you have a Flipper, use upstream — it is the original and it is excellent.
 
@@ -181,5 +183,7 @@ Unverified: the Cardputer ADV, and long sessions with many many phones.
 
 ## License
 
-MIT — see [LICENSE](LICENSE), same as upstream. `vendor/libs/` holds third-party
-libraries under their own licenses.
+MIT — see [LICENSE](LICENSE), same as upstream. The upstream engine, phone client,
+and English content remain attributed to Tarik Caramanico; the original
+Cardputer port remains attributed to genkigenki. `vendor/libs/` holds
+third-party libraries under their own licenses.
