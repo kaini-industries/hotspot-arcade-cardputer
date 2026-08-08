@@ -116,16 +116,32 @@ connect four, tic-tac-toe, dots & boxes, reversi, drawing, pong, guess the color
 battleship, chess — fifteen in all. Every one is phone-driven; the host picks which is
 live and watches.
 
-## Build
+## Developer setup and build
 
-Needs `node` and `arduino-cli`.
+The supported host baseline is macOS Apple Silicon or Linux x64. Node, Arduino,
+and downloaded dependencies are pinned by `.nvmrc` and
+`tools/toolchain.lock.json`; project-local Arduino data lives under
+`.cache/arduino` and bootstrapped executables live under `.tools`.
 
-```bash
-tools/build.sh --deps
+```sh
+nvm install 24.19.0
+nvm use 24.19.0
+brew install arduino-cli esptool emscripten actionlint
+git clone https://github.com/kaini-industries/hotspot-arcade.git ../hotspot-arcade
+
+tools/bootstrap.sh
+tools/doctor.sh
+tools/build.sh
 ```
 
-`--deps` installs esp32 core 3.3.11 and the M5Cardputer library (which pulls
-M5Unified and M5GFX); drop it after the first run. The FQBN matters:
+`tools/bootstrap-node.sh` is the checksum-verifying alternative to `nvm` used by
+CI. `tools/bootstrap.sh` installs Arduino CLI 1.5.1, ESP32 core 3.3.11,
+M5Cardputer 1.1.1, M5Unified 0.2.19, M5GFX 0.2.26, and every resolved transitive
+library from reviewed archive hashes. Emscripten 6.0.2 is available through
+`tools/bootstrap-simulator.sh`. PlatformIO, Docker, Playwright, and `jq` are not
+required.
+
+`tools/build.sh --deps` combines bootstrap and build. The FQBN matters:
 
 ```
 esp32:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB
@@ -157,19 +173,29 @@ New code lives in four files under `hotspot-arcade-cardputer/`:
 
 ## Staying in sync
 
-**The rule: nothing under `vendor/` is edited here.** Everything in it is
-upstream's, copied verbatim, with the exact commit pinned in [UPSTREAM.md](UPSTREAM.md).
-Want a game changed? Change it upstream — then both projects get it.
+**The rule: nothing under `vendor/` is edited here.** Engine, browser, content,
+and library files are copied from one committed object in the
+[Kaini Industries Hotspot Arcade source](https://github.com/kaini-industries/hotspot-arcade),
+a maintained fork of Tarik Caramanico's original project. The exact commit and a
+per-file SHA-256 inventory are recorded in [UPSTREAM.md](UPSTREAM.md) and
+`UPSTREAM.lock.json`.
 
-```bash
-node tools/sync-upstream.mjs ../hotspot-arcade   # refresh vendor/ + re-pin the commit
-node tools/gen-assets.mjs                        # re-bake into the sketch
+```sh
+node tools/sync-upstream.mjs \
+  --repo ../hotspot-arcade \
+  --commit 25ad21523c9a66eb712911545792ee8ebf6281ad
+node tools/gen-assets.mjs
+node tools/gen-assets.mjs --check
 ```
 
-`git diff vendor/` after a sync is exactly the upstream change. `gen-assets.mjs`
-copies the three engine headers into the sketch folder because arduino-cli builds
-from a copy of the sketch directory, so an include reaching outside it would not
-resolve — those copies are generated and carry a banner saying so.
+The sync requires clean source and destination checkouts, the reviewed canonical
+repository URL, and an explicit 40-character commit. It reads committed Git
+objects rather than the source working tree, normalizes reviewed packs into
+`vendor/packs/<language>/<game>/`, replaces all vendor destinations atomically,
+and rejects missing, unknown, unsafe, or malformed content. The generator uses
+UTF-8 byte counts and creates deterministic web/content data, game/language
+metadata, and the three engine headers in the sketch directory. Those generated
+headers are ignored and must not be edited by hand.
 
 ## Distribution
 
