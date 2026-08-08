@@ -103,13 +103,17 @@ the live scoreboard, and the last event. Everything else is one key away.
 
 | key | |
 | --- | --- |
-| `G` | select game (arrow keys move, `Enter` picks, `Esc` backs out) |
-| `L` | cumulative in-memory session leaderboard |
-| `C` | scrollable 24-entry typed event log |
+| `G` | choose a game; `;`/`.` move, `Enter` selects, and `S` changes sort order |
+| `L` | browse the cumulative session leaderboard |
+| `H` | browse immutable history, inspect standings, or restore a session |
+| `C` | browse all 24 retained typed host events |
+| `S` | open settings for SSID, audio, language, AP, events, and diagnostics |
+| `D` | open diagnostics directly |
+| `N` | rename the AP after checkpointing and pausing the session |
+| `P` | pause/start the AP, or resume early during its reconnect window |
 | `E` | end the current round |
-| `N` | rename the AP with a planned pause and reconnect window |
-| `P` | pause/start the AP, or resume early during reconnect |
-| `Esc` | back to the dashboard |
+| `R` | archive and start a new cumulative session, with confirmation |
+| `Esc` | return toward the dashboard |
 
 Serial at 115200 prints the AP address, asset counts and free heap at boot.
 
@@ -117,6 +121,26 @@ Games: trivia, would-you-rather, word scramble, spectrum, kiss marry kill, react
 connect four, tic-tac-toe, dots & boxes, reversi, drawing, pong, guess the color,
 battleship, chess — fifteen in all. Every one is phone-driven; the host picks which is
 live and watches.
+
+## Session scores and recovery
+
+Phones show scores for the selected game; the Cardputer keeps a separate cumulative
+ledger until **New Session**. A reboot restores known identities, names, avatars,
+cumulative scores, and the selected game, then opens that game in a fresh lobby with
+phone scores reset. An in-progress round, chat, Draw strokes, and the host event log
+are transient.
+
+With microSD, configuration and active state alternate between CRC-checked A/B
+slots, while completed sessions are immutable files under
+`/hotspot-arcade/history/` and are never pruned automatically. Restoring history
+archives the current nonempty session first, creates a distinct active session with
+`restored_from`, and restores its cumulative standings into a fresh lobby.
+
+Without microSD, NVS retains settings and a bounded active-session fallback, but no
+history; abrupt power loss may lose up to 30 seconds of recent changes. If archiving
+fails or storage is full, the firmware preserves the active session unless the host
+explicitly confirms discarding it a second time. The Diagnostics screen reports
+heap, queue, rate-limit, loop, lock, SD, and checkpoint health.
 
 ## Developer setup and build
 
