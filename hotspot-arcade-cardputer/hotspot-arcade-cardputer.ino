@@ -58,8 +58,9 @@
 // 0 = off, 1 = low, 2 = high. Stored here; the UI settings screen changes it.
 uint8_t haAudioLevel = 1;
 
-// Content language (see ha_ui.h): 0 English, 1 Deutsch. Persisted in NVS. The Settings
-// screen changes it and sets haLangDirty; loop() then re-streams the packs.
+// Content language (see ha_ui.h): 0 English, 1 Deutsch. This tranche persists
+// settings to microSD; the next stacked change adds the bounded NVS fallback.
+// Settings changes set haLangDirty so loop() can re-stream the packs.
 uint8_t haLang = 0;
 bool haLangDirty = false;
 static uint8_t haLoadedLang = 0;
@@ -867,22 +868,61 @@ static void haSdBegin() {
 // Settings (SSID, audio, language) retain the legacy line-oriented SD format
 // until the durable A/B + NVS storage tranche replaces it.
 static const char* HA_CFG_PATH = "/hotspot-arcade/config.txt";
+static const char* HA_CFG_TMP_PATH = "/hotspot-arcade/config.tmp";
+static const char* HA_CFG_BACKUP_PATH = "/hotspot-arcade/config.bak";
 
 static bool haCfgSaveValues(const char* ssid, uint8_t audio, uint8_t lang) {
-    // Legacy no-SD behavior keeps settings in memory for this boot. PR5 adds the
-    // bounded NVS mirror and explicit cross-media generations.
-    if(!haSdOk) return true;
-    if(!ssid || !ssid[0]) return false;
+    // A failed persistence callback must leave the previous durable SSID intact:
+    // haSsidApplyTransaction() relies on that before it restarts the prior AP.
+    if(!haSdOk || !ssid || !ssid[0]) return false;
     SD.mkdir("/hotspot-arcade");
-    SD.remove(HA_CFG_PATH);
-    File f = SD.open(HA_CFG_PATH, FILE_WRITE);
+
+    char record[96];
+    int recordLength = snprintf(
+        record,
+        sizeof(record),
+        "ssid=%s\naudio=%u\nlang=%u\n",
+        ssid,
+        (unsigned)audio,
+        (unsigned)lang);
+    if(recordLength <= 0 || (size_t)recordLength >= sizeof(record)) return false;
+
+    SD.remove(HA_CFG_TMP_PATH);
+    File f = SD.open(HA_CFG_TMP_PATH, FILE_WRITE);
     if(!f) return false;
-    bool ok = f.printf("ssid=%s\n", ssid) > 0;
-    ok = f.printf("audio=%u\n", (unsigned)audio) > 0 && ok;
-    ok = f.printf("lang=%u\n", (unsigned)lang) > 0 && ok;
+    size_t bytesWritten = f.write((const uint8_t*)record, (size_t)recordLength);
     f.flush();
     f.close();
-    return ok;
+    if(bytesWritten != (size_t)recordLength) {
+        SD.remove(HA_CFG_TMP_PATH);
+        return false;
+    }
+
+    File verify = SD.open(HA_CFG_TMP_PATH, FILE_READ);
+    char readback[sizeof(record)];
+    size_t bytesRead = verify ? verify.readBytes(readback, (size_t)recordLength) : 0;
+    bool verified = verify && verify.size() == (size_t)recordLength &&
+                    bytesRead == (size_t)recordLength &&
+                    memcmp(readback, record, (size_t)recordLength) == 0;
+    if(verify) verify.close();
+    if(!verified) {
+        SD.remove(HA_CFG_TMP_PATH);
+        return false;
+    }
+
+    SD.remove(HA_CFG_BACKUP_PATH);
+    bool hadCurrent = SD.exists(HA_CFG_PATH);
+    if(hadCurrent && !SD.rename(HA_CFG_PATH, HA_CFG_BACKUP_PATH)) {
+        SD.remove(HA_CFG_TMP_PATH);
+        return false;
+    }
+    if(!SD.rename(HA_CFG_TMP_PATH, HA_CFG_PATH)) {
+        if(hadCurrent) (void)SD.rename(HA_CFG_BACKUP_PATH, HA_CFG_PATH);
+        SD.remove(HA_CFG_TMP_PATH);
+        return false;
+    }
+    if(hadCurrent) SD.remove(HA_CFG_BACKUP_PATH);
+    return true;
 }
 
 bool haCfgSave() {
@@ -897,7 +937,8 @@ static bool haPersistSsidConfig(const char* ssid) {
 
 static void haCfgLoad() {
     if(!haSdOk) return;
-    File f = SD.open(HA_CFG_PATH, FILE_READ);
+    const char* loadPath = SD.exists(HA_CFG_PATH) ? HA_CFG_PATH : HA_CFG_BACKUP_PATH;
+    File f = SD.open(loadPath, FILE_READ);
     if(!f) return;
     while(f.available()) {
         String line = f.readStringUntil('\n');

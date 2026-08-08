@@ -88,10 +88,11 @@ range-checked; Draw coordinates must be present, finite, and normalized before r
 ## Scores
 
 Browser-visible `score` belongs to the currently selected game. The Cardputer host
-ledger accumulates every typed engine score award across games until New Session.
-Selecting/replaying a game may reset its browser score but does not subtract from the
-cumulative ledger. All awards originate from the engine's centralized score path;
-host event text is never parsed to infer points.
+ledger accumulates every typed engine score award across games for the in-memory host
+session. The next stacked persistence/history change adds the confirmed New Session
+operation. Selecting/replaying a game may reset its browser score but does not
+subtract from the cumulative ledger. All awards originate from the engine's
+centralized score path; host event text is never parsed to infer points.
 
 ## Typed host events
 
@@ -106,16 +107,12 @@ Event version is 1. The seven kinds are `MATCH_STARTED`, `CHAT`, `ROLE`,
 at a valid UTF-8 boundary. The Cardputer formats these events into a 24-entry ring;
 unknown versions/kinds are ignored rather than interpreted as JSON.
 
-## Persistence contract
+## Persistence boundary in this tranche
 
-The following are durable: session number/provenance, stable identity digests,
-nicknames, avatars, cumulative scores, selected game, sparse game-play counts, and
-settings. The following are transient: raw tokens, sockets/PIDs across reboot, phone
-game scores, current round state, chat, Draw strokes, and host event log.
-
-Reboot restores the durable roster and cumulative standings, then starts the selected
-game in a fresh lobby. Restoring immutable history creates a new active session with
-`restored_from`; it never reactivates or modifies the archive.
+Protocol/session state in this branch is in memory, except for the legacy microSD
+settings record. Raw resume tokens always remain browser-only. The next stacked
+change adds redundant SD/NVS active-state recovery and immutable history; until then,
+a reboot starts a new roster and cumulative ledger.
 
 ## Security boundary
 

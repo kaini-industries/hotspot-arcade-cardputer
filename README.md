@@ -94,6 +94,9 @@ external antenna.
 
 The AP comes up at boot; there is no start step. Phones join **Hotspot Arcade** (open)
 and land on `http://192.168.4.1` (if not automatically getting there via captive portal).
+The dashboard displays a six-digit party join code for new browsers. A returning
+browser can resume its identity without the code during the session; the code is
+admission control, not encryption, and nearby observers can still read open traffic.
 
 The dashboard is the host view: SSID and IP, whether the AP is up, the active game,
 the live scoreboard, and the last event. Everything else is one key away.
@@ -101,12 +104,11 @@ the live scoreboard, and the last event. Everything else is one key away.
 | key | |
 | --- | --- |
 | `G` | select game (arrow keys move, `Enter` picks, `Esc` backs out) |
-| `L` | full leaderboard |
-| `C` | event log |
-| `R` | reset scores |
+| `L` | cumulative in-memory session leaderboard |
+| `C` | scrollable 24-entry typed event log |
 | `E` | end the current round |
-| `N` | rename the AP (restarts it, which drops every phone) |
-| `P` | stop / start the AP |
+| `N` | rename the AP with a planned pause and reconnect window |
+| `P` | pause/start the AP, or resume early during reconnect |
 | `Esc` | back to the dashboard |
 
 Serial at 115200 prints the AP address, asset counts and free heap at boot.
