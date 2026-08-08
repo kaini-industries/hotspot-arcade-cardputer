@@ -8,18 +8,24 @@
 #pragma once
 #include <M5Cardputer.h>
 #include "ha_host.h"
+#include "ha_history.h"
 #include "ha_metadata.h"
+#include "ha_diagnostics.h"
+#include "ha_network_policy.h"
 
 // ---- implemented in the .ino (they touch the engine / WiFi under the lock) ----
 void haHostSelectGame(uint8_t game);
+bool haHostResetScores(bool discardOnArchiveFailure = false);
 void haHostRoundEnd();
+void haHostCheckpoint();
 void haHostApplySsid(const char* ssid);
 void haHostTogglePortal();
-bool haCfgSave(); // persist SSID/audio/language through the current config backend
+bool haCfgSave(); // persist SSID/audio/language to the redundant config stores
 const char* haHostSsid();
 const char* haHostJoinCode();
 String haHostIp();
 void haHostSnapshot(HaHost& dst);
+void haHostDiagnosticsSnapshot(HaDiagnostics& dst);
 
 // Game/language metadata is generated from tools/content-manifest.json. The UI is
 // therefore capacity-safe when a new game id is added; nothing indexes a fixed
@@ -38,9 +44,15 @@ enum HaUiView {
     HA_VIEW_DASH,
     HA_VIEW_GAMES,
     HA_VIEW_BOARD,
+    HA_VIEW_HISTORY,
+    HA_VIEW_HISTORY_DETAIL,
+    HA_VIEW_HISTORY_RESTORE,
     HA_VIEW_CONSOLE,
     HA_VIEW_SSID,
-    HA_VIEW_SETTINGS
+    HA_VIEW_SETTINGS,
+    HA_VIEW_DIAGNOSTICS,
+    HA_VIEW_RESET_CONFIRM,
+    HA_VIEW_RESET_DISCARD_CONFIRM
 };
 
 // Audio level (0 off / 1 low / 2 high) lives in the .ino (the speaker jingles are
@@ -63,18 +75,25 @@ struct HaLanguageNameTable {
 static const HaLanguageCodeTable HA_LANG_CODE;
 static const HaLanguageNameTable HA_LANG_NAME;
 
-#define HA_SET_COUNT 5 // SSID, Audio, Language, AP, Event log
+#define HA_SET_COUNT 6 // SSID, Audio, Language, AP, Event log, Diagnostics
 
-static M5Canvas haUiCanvas(&M5Cardputer.Display);
+static M5Canvas* haUiCanvasStorage = nullptr;
+#define haUiCanvas (*haUiCanvasStorage)
 static bool haUiSprite = false;
 static HaUiView haUiView = HA_VIEW_DASH;
 static int haUiCursor = 0;
 static int haUiScroll = 0;
 static char haUiEdit[33] = "";
-static uint8_t haGameSort = 0;
-static int haGamesOrder[HA_UI_GAME_COUNT];
+static uint8_t haGameSort = 0;       // game picker order: 0 alphabetical, 1 most played
+static int haGamesOrder[HA_UI_GAME_COUNT]; // display order, filled per sort mode
+static HaHistSession* haUiHistDetailStorage = nullptr;
+#define haUiHistDetail (*haUiHistDetailStorage)
+static bool haUiRestoreFailed = false;
+static bool haUiResetFailed = false;
 static HaUiView haUiSettingsReturn = HA_VIEW_SETTINGS;
-static HaHost haUiSnap = {};
+static HaUiView haUiResetReturn = HA_VIEW_DASH;
+static HaHost* haUiSnapStorage = nullptr; // locked copy; never touched by AsyncTCP
+#define haUiSnap (*haUiSnapStorage)
 static uint32_t haUiDrawnRev = 0xFFFFFFFF;
 static uint32_t haUiLastDraw = 0;
 static uint32_t haUiLastProbe = 0;
@@ -85,21 +104,37 @@ static bool haUiForce = true;
 #define HA_UI_ROW 10 // px per list row at the 6x8 font
 
 static lgfx::LovyanGFX* haUiG() {
-    return haUiSprite
-               ? (lgfx::LovyanGFX*)&haUiCanvas
+    return haUiSprite && haUiCanvasStorage
+               ? (lgfx::LovyanGFX*)haUiCanvasStorage
                : (lgfx::LovyanGFX*)&M5Cardputer.Display;
 }
 
 static void haUiBegin() {
     M5Cardputer.Display.setRotation(1);
     M5Cardputer.Display.setBrightness(90);
-    // 8bpp keeps the off-screen buffer at ~32KB. If allocation fails, direct
-    // drawing remains available as the bounded fallback.
-    haUiCanvas.setPsram(false);
-    haUiCanvas.setColorDepth(8);
-    haUiSprite = haUiCanvas.createSprite(HA_UI_W, HA_UI_H) != nullptr;
+    haUiSnapStorage = new(std::nothrow) HaHost{};
+    haUiCanvasStorage = new(std::nothrow) M5Canvas(&M5Cardputer.Display);
+    if(!haUiSnapStorage) {
+        Serial.println("[ha] UI: snapshot allocation failed");
+        return;
+    }
+    // 8bpp keeps the off-screen buffer at ~32KB. 16bpp would be 65KB, which is a
+    // lot to hold alongside the WiFi stack and eight WebSocket clients on a board
+    // with no PSRAM. If it still can't be had, fall back to drawing direct (which
+    // flickers, but works).
+    if(haUiCanvasStorage) {
+        haUiCanvas.setPsram(false);
+        haUiCanvas.setColorDepth(8);
+        haUiSprite = haUiCanvas.createSprite(HA_UI_W, HA_UI_H) != nullptr;
+    }
     haUiG()->setTextFont(1);
     haUiG()->setTextSize(1);
+}
+
+static bool haUiEnsureHistDetail() {
+    if(haUiHistDetailStorage) return true;
+    haUiHistDetailStorage = new(std::nothrow) HaHistSession{};
+    return haUiHistDetailStorage != nullptr;
 }
 
 // ---- drawing ---------------------------------------------------------------
@@ -229,8 +264,10 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
     for(uint8_t i = 0; i < HA_SESSION_MAX_PLAYERS; i++)
         if(haUiSnap.session[i].used && haUiSnap.session[i].connected) online++;
     int offline = haUiSnap.sessionCount > online ? haUiSnap.sessionCount - online : 0;
+    const char* storage = !haSdOk ? "NVS" :
+                          (haHistStorageReady() ? "SD OK" : "SD ERR");
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    snprintf(line, sizeof(line), "%d on/%d off", online, offline);
+    snprintf(line, sizeof(line), "%s  %d on/%d off", storage, online, offline);
     g->drawString(line, 132, 30);
     snprintf(line, sizeof(line), "Game: %s", haUiGameLabel(haUiSnap.activeGame));
     g->drawString(line, 3, 45);
@@ -255,7 +292,7 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
         g->setTextColor(HA_ORANGE, TFT_BLACK);
         g->drawString(haUiSnap.lastEvent, 3, HA_UI_H - 22);
     }
-    haUiFooter(g, "G game L board C events S settings");
+    haUiFooter(g, "G game L board H history D diagnostics");
 }
 
 #define HA_GAMES_ROW 16 // px per game row at text size 2
@@ -334,7 +371,7 @@ static void haUiDrawGames(lgfx::LovyanGFX* g) {
 }
 
 // The leaderboard is the cumulative host session, including temporarily offline
-// players. Durable archive/history controls are added by the persistence tranche.
+// players. Opening it requests a durable checkpoint; R archives it before reset.
 static void haUiDrawBoard(lgfx::LovyanGFX* g) {
     haUiHeader(g, "SESSION LEADERBOARD");
     uint8_t order[HA_SESSION_MAX_PLAYERS];
@@ -345,9 +382,124 @@ static void haUiDrawBoard(lgfx::LovyanGFX* g) {
     } else {
         haUiDrawSessionRows(g, order, n);
     }
-    haUiFooter(g, ";/. scroll ESC");
+    haUiFooter(g, haSdOk ? ";/. scroll R new session ESC" : ";/. scroll R reset (no SD)");
 }
 
+static void haUiDrawHistory(lgfx::LovyanGFX* g) {
+    char title[32];
+    uint32_t total = haHistStorageReady() ? haHist.total : 0;
+    snprintf(title, sizeof(title), "HISTORY - %lu", (unsigned long)total);
+    haUiHeader(g, title);
+    if(!haSdOk) {
+        g->setTextColor(TFT_RED, TFT_BLACK);
+        g->drawString("microSD unavailable", 3, 20);
+    } else if(!haHistStorageReady() || !haHist.count) {
+        g->setTextColor(TFT_DARKGREY, TFT_BLACK);
+        g->drawString("no archived sessions", 3, 20);
+        g->drawString("R on the leaderboard starts one", 3, 32);
+    } else {
+        if(haUiCursor < 0) haUiCursor = 0;
+        if(haUiCursor >= haHist.count) haUiCursor = haHist.count - 1;
+        for(uint8_t i = 0; i < haHist.count; i++) {
+            const HaHistSummary& s = haHist.s[i];
+            int y = 15 + i * 17;
+            bool selected = i == haUiCursor;
+            if(selected) g->fillRect(0, y - 1, HA_UI_W, 16, HA_ORANGE);
+            g->setTextColor(selected ? TFT_BLACK : TFT_WHITE, selected ? HA_ORANGE : TFT_BLACK);
+            char line[44];
+            snprintf(
+                line,
+                sizeof(line),
+                "#%-5lu %-15.15s %uP",
+                (unsigned long)s.num,
+                haUiGameLabel(s.game),
+                (unsigned)s.count);
+            g->drawString(line, 3, y + 1);
+            char score[14];
+            snprintf(score, sizeof(score), "%ld", (long)s.leaderScore);
+            g->drawString(score, HA_UI_W - 6 * (int)strlen(score) - 3, y + 1);
+        }
+    }
+    haUiFooter(g, ";/. move ,// page ENTER view ESC");
+}
+
+static void haUiDrawHistoryDetail(lgfx::LovyanGFX* g) {
+    if(!haUiHistDetailStorage) return;
+    char title[32];
+    snprintf(title, sizeof(title), "SESSION #%lu", (unsigned long)haUiHistDetail.num);
+    haUiHeader(g, title);
+    const int rows = 9;
+    int maxScroll = haUiHistDetail.count > rows ? haUiHistDetail.count - rows : 0;
+    if(haUiScroll < 0) haUiScroll = 0;
+    if(haUiScroll > maxScroll) haUiScroll = maxScroll;
+    g->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    g->drawString(haUiGameLabel(haUiHistDetail.game), 3, 15);
+    for(int row = 0; row < rows && haUiScroll + row < haUiHistDetail.count; row++) {
+        int rank = haUiScroll + row;
+        const HaHistPlayer& p = haUiHistDetail.p[rank];
+        char line[40];
+        snprintf(line, sizeof(line), "%2d  %-20.20s %ld", rank + 1, p.nick, (long)p.score);
+        g->setTextColor(rank == 0 ? HA_ORANGE : TFT_WHITE, TFT_BLACK);
+        g->drawString(line, 3, 27 + row * HA_UI_ROW);
+    }
+    haUiFooter(
+        g,
+        haHistCanRestore() ? ";/. scroll Y restore ESC" : ";/. scroll ESC (restore offline)");
+}
+
+static void haUiDrawHistoryRestore(lgfx::LovyanGFX* g) {
+    if(!haUiHistDetailStorage) return;
+    haUiHeader(g, "RESTORE SESSION?");
+    g->setTextSize(2);
+    g->setTextColor(HA_ORANGE, TFT_BLACK);
+    char line[28];
+    snprintf(line, sizeof(line), "Session #%lu", (unsigned long)haUiHistDetail.num);
+    g->drawString(line, 10, 26);
+    g->setTextSize(1);
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    g->drawString("Current play is archived first.", 10, 55);
+    g->drawString("Phones reconnect to restored scores.", 10, 67);
+    if(haUiRestoreFailed) {
+        g->setTextColor(TFT_RED, TFT_BLACK);
+        g->drawString("Restore failed; active play unchanged.", 10, 83);
+    }
+    haUiFooter(g, "Y confirm   ESC cancel");
+}
+
+static void haUiDrawResetConfirm(lgfx::LovyanGFX* g) {
+    haUiHeader(g, "NEW SESSION?");
+    g->setTextSize(2);
+    g->setTextColor(HA_ORANGE, TFT_BLACK);
+    g->drawString("Archive scores", 12, 28);
+    g->setTextSize(1);
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    g->drawString("Then reset cumulative session scores.", 12, 57);
+    if(!haSdOk) {
+        g->setTextColor(TFT_RED, TFT_BLACK);
+        g->drawString("No SD: this session cannot be archived.", 12, 73);
+    }
+    haUiFooter(g, "Y confirm   ESC cancel");
+}
+
+static void haUiDrawResetDiscardConfirm(lgfx::LovyanGFX* g) {
+    haUiHeader(g, "ARCHIVE FAILED");
+    g->setTextSize(2);
+    g->setTextColor(TFT_RED, TFT_BLACK);
+    g->drawString("Discard scores?", 12, 25);
+    g->setTextSize(1);
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    g->drawString("The active session could not be archived.", 8, 54);
+    g->drawString("A second Y permanently discards it.", 8, 67);
+    if(haUiResetFailed) {
+        g->setTextColor(TFT_RED, TFT_BLACK);
+        g->drawString("Reset failed; active play is unchanged.", 8, 83);
+    }
+    haUiFooter(g, "Y DISCARD   ESC keep session");
+}
+
+// One option of a multi-choice setting (audio off/low/high, AP on/off). The current
+// choice is filled -- orange on the selected (editable) row, grey otherwise; the rest
+// are outlined. Returns the x just past the pill, so options tile left to right.
 static int haUiOptPill(lgfx::LovyanGFX* g, int x, int y, const char* txt, bool current, bool rowSel) {
     int w = (int)g->textWidth(txt) + 8;
     if(current) {
@@ -391,7 +543,7 @@ static void haUiDrawSettings(lgfx::LovyanGFX* g) {
     g->setTextSize(1);
     const int VALX = 92, y0 = 16, rowH = 17;
     const char* labels[HA_SET_COUNT] = {
-        "SSID", "Audio", "Language", "Access Point", "Event log"};
+        "SSID", "Audio", "Language", "Access Point", "Event log", "Diagnostics"};
     for(int i = 0; i < HA_SET_COUNT; i++) {
         bool sel = (i == haUiCursor);
         int y = y0 + i * rowH;
@@ -422,9 +574,54 @@ static void haUiDrawSettings(lgfx::LovyanGFX* g) {
         case 4: // Event log -- opens a sub-screen
             haUiValPill(g, cx, y, "GO >", sel, false);
             break;
+        case 5: // Diagnostics -- opens a sub-screen
+            haUiValPill(g, cx, y, "GO >", sel, false);
+            break;
         }
     }
     haUiFooter(g, ";/. move   ,// change   ENTER open   ESC back");
+}
+
+static void haUiDrawDiagnostics(lgfx::LovyanGFX* g) {
+    HaDiagnostics d{};
+    haHostDiagnosticsSnapshot(d);
+    haUiHeader(g, "DIAGNOSTICS");
+    g->setTextColor(TFT_WHITE, TFT_BLACK);
+    char line[48];
+    snprintf(line, sizeof(line), "heap %lu min %lu block %lu",
+             (unsigned long)d.freeHeap,
+             (unsigned long)d.minFreeHeap,
+             (unsigned long)d.largestFreeBlock);
+    g->drawString(line, 3, 15);
+    snprintf(line, sizeof(line), "ws %u auth %u pending %u qmax %u",
+             (unsigned)d.wsObjects,
+             (unsigned)d.wsAuthenticated,
+             (unsigned)d.wsPending,
+             (unsigned)d.maxSocketQueue);
+    g->drawString(line, 3, 27);
+    snprintf(line, sizeof(line), "rate ctl %lu draw %lu chat %lu emoji %lu",
+             (unsigned long)d.rateRejected[HaInboundGeneral],
+             (unsigned long)d.rateRejected[HaInboundDraw],
+             (unsigned long)d.rateRejected[HaInboundChat],
+             (unsigned long)d.rateRejected[HaInboundEmoji]);
+    g->drawString(line, 3, 39);
+    snprintf(line, sizeof(line), "flow coalesce %lu drop %lu close %lu",
+             (unsigned long)d.outputCoalesced,
+             (unsigned long)d.streamDropped,
+             (unsigned long)d.overloadCloses);
+    g->drawString(line, 3, 51);
+    snprintf(line, sizeof(line), "loop %lums lock %luus sound drop %lu",
+             (unsigned long)d.maxLoopGapMs,
+             (unsigned long)d.maxEngineLockUs,
+             (unsigned long)d.soundDropped);
+    g->drawString(line, 3, 63);
+    snprintf(line, sizeof(line), "SD failures %lu checkpoint %lu",
+             (unsigned long)d.sdFailures,
+             (unsigned long)d.checkpointGeneration);
+    g->drawString(line, 3, 75);
+    g->setTextColor(TFT_DARKGREY, TFT_BLACK);
+    g->drawString("Values are high-water marks since boot.", 3, 91);
+    haUiFooter(g, "ESC back");
 }
 
 static void haUiDrawConsole(lgfx::LovyanGFX* g) {
@@ -468,6 +665,12 @@ static void haUiDrawSsid(lgfx::LovyanGFX* g) {
 }
 
 static void haUiDraw(bool snapshot = true) {
+    if(!haUiSnapStorage || !haHostStorage) {
+        M5Cardputer.Display.fillScreen(TFT_BLACK);
+        M5Cardputer.Display.setTextColor(TFT_RED, TFT_BLACK);
+        M5Cardputer.Display.drawString("UI memory unavailable", 3, 20);
+        return;
+    }
     if(snapshot) haHostSnapshot(haUiSnap);
     lgfx::LovyanGFX* g = haUiG();
     if(haUiSprite) haUiCanvas.fillSprite(TFT_BLACK);
@@ -481,6 +684,15 @@ static void haUiDraw(bool snapshot = true) {
     case HA_VIEW_BOARD:
         haUiDrawBoard(g);
         break;
+    case HA_VIEW_HISTORY:
+        haUiDrawHistory(g);
+        break;
+    case HA_VIEW_HISTORY_DETAIL:
+        haUiDrawHistoryDetail(g);
+        break;
+    case HA_VIEW_HISTORY_RESTORE:
+        haUiDrawHistoryRestore(g);
+        break;
     case HA_VIEW_CONSOLE:
         haUiDrawConsole(g);
         break;
@@ -489,6 +701,15 @@ static void haUiDraw(bool snapshot = true) {
         break;
     case HA_VIEW_SETTINGS:
         haUiDrawSettings(g);
+        break;
+    case HA_VIEW_DIAGNOSTICS:
+        haUiDrawDiagnostics(g);
+        break;
+    case HA_VIEW_RESET_CONFIRM:
+        haUiDrawResetConfirm(g);
+        break;
+    case HA_VIEW_RESET_DISCARD_CONFIRM:
+        haUiDrawResetDiscardConfirm(g);
         break;
     default:
         haUiDrawDash(g);
@@ -510,15 +731,40 @@ static void haUiOpen(HaUiView v) {
         haUiComputeGamesOrder(); // cursor is a position in the sorted display order
         for(int i = 0; i < HA_UI_GAME_COUNT; i++)
             if(HA_UI_GAMES[haGamesOrder[i]].id == haUiSnap.activeGame) haUiCursor = i;
-    } else if(v == HA_VIEW_BOARD) haHostSnapshot(haUiSnap);
+    } else if(v == HA_VIEW_BOARD) {
+        haHostSnapshot(haUiSnap);
+        haHostCheckpoint(); // forced only when durable host fields have changed
+    } else if(v == HA_VIEW_HISTORY) {
+        haHistCatalogNewest();
+    }
     haUiForce = true;
 }
 
 static void haUiBack() {
-    if(haUiView == HA_VIEW_SSID || haUiView == HA_VIEW_CONSOLE)
+    switch(haUiView) {
+    case HA_VIEW_SSID:
+    case HA_VIEW_CONSOLE:
+    case HA_VIEW_DIAGNOSTICS:
         haUiOpen(haUiSettingsReturn);
-    else
+        break;
+    case HA_VIEW_HISTORY_DETAIL:
+        haUiView = HA_VIEW_HISTORY;
+        haUiScroll = 0;
+        haUiForce = true;
+        break;
+    case HA_VIEW_HISTORY_RESTORE:
+        haUiView = HA_VIEW_HISTORY_DETAIL;
+        haUiScroll = 0;
+        haUiForce = true;
+        break;
+    case HA_VIEW_RESET_CONFIRM:
+    case HA_VIEW_RESET_DISCARD_CONFIRM:
+        haUiOpen(haUiResetReturn);
+        break;
+    default:
         haUiOpen(HA_VIEW_DASH);
+        break;
+    }
 }
 
 // Change the value of the selected settings row in place (the ,/ left-right keys).
@@ -564,6 +810,42 @@ static void haUiChar(char c) {
         return;
     }
 
+    if(haUiView == HA_VIEW_HISTORY_RESTORE) {
+        if(c == '`') haUiBack();
+        else if(c == 'y' || c == 'Y') {
+            haUiRestoreFailed = !haUiHistDetailStorage ||
+                                !haHistRequestRestore(haUiHistDetail);
+            if(!haUiRestoreFailed) haUiOpen(HA_VIEW_BOARD);
+            else haUiForce = true;
+        }
+        return;
+    }
+    if(haUiView == HA_VIEW_RESET_CONFIRM) {
+        if(c == '`') haUiBack();
+        else if(c == 'y' || c == 'Y') {
+            if(haHostResetScores(false)) {
+                haUiOpen(HA_VIEW_BOARD);
+            } else {
+                haUiResetFailed = false;
+                haUiView = HA_VIEW_RESET_DISCARD_CONFIRM;
+                haUiForce = true;
+            }
+        }
+        return;
+    }
+    if(haUiView == HA_VIEW_RESET_DISCARD_CONFIRM) {
+        if(c == '`') haUiBack();
+        else if(c == 'y' || c == 'Y') {
+            if(haHostResetScores(true)) {
+                haUiOpen(HA_VIEW_BOARD);
+            } else {
+                haUiResetFailed = true;
+                haUiForce = true;
+            }
+        }
+        return;
+    }
+
     switch(c) {
     case '`': // esc
         haUiBack();
@@ -573,6 +855,11 @@ static void haUiChar(char c) {
         else if(haUiView == HA_VIEW_SETTINGS && haUiCursor > 0) haUiCursor--;
         else if(haUiView == HA_VIEW_BOARD && haUiScroll > 0) haUiScroll--;
         else if(haUiView == HA_VIEW_CONSOLE) haUiScroll++;
+        else if(haUiView == HA_VIEW_HISTORY) {
+            if(haUiCursor > 0) haUiCursor--;
+            else if(haHistStorageReady() && haHist.hasNewer && haHistCatalogNewer())
+                haUiCursor = haHist.count - 1;
+        } else if(haUiView == HA_VIEW_HISTORY_DETAIL && haUiScroll > 0) haUiScroll--;
         haUiForce = true;
         return;
     case '.': // down
@@ -580,6 +867,11 @@ static void haUiChar(char c) {
         else if(haUiView == HA_VIEW_SETTINGS && haUiCursor < HA_SET_COUNT - 1) haUiCursor++;
         else if(haUiView == HA_VIEW_BOARD) haUiScroll++;
         else if(haUiView == HA_VIEW_CONSOLE && haUiScroll > 0) haUiScroll--;
+        else if(haUiView == HA_VIEW_HISTORY) {
+            if(haHistStorageReady() && haUiCursor + 1 < haHist.count) haUiCursor++;
+            else if(haHistStorageReady() && haHist.hasOlder && haHistCatalogOlder())
+                haUiCursor = 0;
+        } else if(haUiView == HA_VIEW_HISTORY_DETAIL) haUiScroll++;
         haUiForce = true;
         return;
     case ',': // left: page up in the picker, or decrement a setting value
@@ -588,6 +880,11 @@ static void haUiChar(char c) {
         else if(haUiView == HA_VIEW_BOARD)
             haUiScroll = haUiScroll > 10 ? haUiScroll - 10 : 0;
         else if(haUiView == HA_VIEW_CONSOLE) haUiScroll += 11;
+        else if(haUiView == HA_VIEW_HISTORY && haHistStorageReady() &&
+                haHist.hasNewer && haHistCatalogNewer())
+            haUiCursor = 0;
+        else if(haUiView == HA_VIEW_HISTORY_DETAIL)
+            haUiScroll = haUiScroll > 9 ? haUiScroll - 9 : 0;
         haUiForce = true;
         return;
     case '/': // right: page down in the picker, or increment a setting value
@@ -597,6 +894,10 @@ static void haUiChar(char c) {
         else if(haUiView == HA_VIEW_BOARD) haUiScroll += 10;
         else if(haUiView == HA_VIEW_CONSOLE)
             haUiScroll = haUiScroll > 11 ? haUiScroll - 11 : 0;
+        else if(haUiView == HA_VIEW_HISTORY && haHistStorageReady() &&
+                haHist.hasOlder && haHistCatalogOlder())
+            haUiCursor = 0;
+        else if(haUiView == HA_VIEW_HISTORY_DETAIL) haUiScroll += 9;
         haUiForce = true;
         return;
     case 'g':
@@ -607,10 +908,21 @@ static void haUiChar(char c) {
     case 'L':
         haUiOpen(HA_VIEW_BOARD);
         return;
+    case 'h':
+    case 'H':
+        haUiOpen(HA_VIEW_HISTORY);
+        return;
     case 'c':
     case 'C':
         haUiSettingsReturn = haUiView == HA_VIEW_SETTINGS ? HA_VIEW_SETTINGS : HA_VIEW_DASH;
         haUiView = HA_VIEW_CONSOLE;
+        haUiScroll = 0;
+        haUiForce = true;
+        return;
+    case 'd':
+    case 'D':
+        haUiSettingsReturn = haUiView == HA_VIEW_SETTINGS ? HA_VIEW_SETTINGS : HA_VIEW_DASH;
+        haUiView = HA_VIEW_DIAGNOSTICS;
         haUiScroll = 0;
         haUiForce = true;
         return;
@@ -637,6 +949,21 @@ static void haUiChar(char c) {
         }
         haUiForce = true;
         return;
+    case 'r':
+    case 'R':
+        haUiResetReturn = haUiView == HA_VIEW_BOARD ? HA_VIEW_BOARD : HA_VIEW_DASH;
+        haUiResetFailed = false;
+        haUiView = HA_VIEW_RESET_CONFIRM;
+        haUiForce = true;
+        return;
+    case 'y':
+    case 'Y':
+        if(haUiView == HA_VIEW_HISTORY_DETAIL && haHistCanRestore()) {
+            haUiRestoreFailed = false;
+            haUiView = HA_VIEW_HISTORY_RESTORE;
+            haUiForce = true;
+        }
+        return;
     case 'e':
     case 'E':
         haHostRoundEnd();
@@ -653,6 +980,12 @@ static void haUiEnter() {
         const HaGameItem& it = HA_UI_GAMES[gameIndex];
         haHostSelectGame(it.id);
         haUiOpen(HA_VIEW_DASH);
+    } else if(haUiView == HA_VIEW_HISTORY && haHistStorageReady() && haHist.count) {
+        if(haUiEnsureHistDetail() && haUiCursor >= 0 && haUiCursor < haHist.count &&
+           haHistLoadSession(haHist.s[haUiCursor].num, haUiHistDetail)) {
+            haUiView = HA_VIEW_HISTORY_DETAIL;
+            haUiScroll = 0;
+        }
     } else if(haUiView == HA_VIEW_SSID) {
         if(haUiEdit[0]) haHostApplySsid(haUiEdit);
         haUiOpen(haUiSettingsReturn);
@@ -686,6 +1019,11 @@ static void haUiEnter() {
             haUiView = HA_VIEW_CONSOLE;
             haUiScroll = 0;
             break;
+        case 5: // Diagnostics
+            haUiSettingsReturn = HA_VIEW_SETTINGS;
+            haUiView = HA_VIEW_DIAGNOSTICS;
+            haUiScroll = 0;
+            break;
         }
     }
     haUiForce = true;
@@ -702,6 +1040,7 @@ static void haUiDel() {
 }
 
 static void haUiPumpKeys() {
+    if(!haUiSnapStorage || !haHostStorage) return;
     if(!M5Cardputer.Keyboard.isChange()) return;
     if(!M5Cardputer.Keyboard.isPressed()) return;
     auto st = M5Cardputer.Keyboard.keysState();
@@ -714,6 +1053,7 @@ static void haUiPumpKeys() {
 // game (pong ticks at 30Hz) can't spend all its time pushing pixels. The 1Hz
 // floor keeps the battery percentage honest.
 static void haUiTick() {
+    if(!haUiSnapStorage || !haHostStorage) return;
     uint32_t now = millis();
     if(!haUiForce && now - haUiLastProbe < 50) return;
     haUiLastProbe = now;

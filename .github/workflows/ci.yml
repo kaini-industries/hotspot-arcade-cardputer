@@ -31,7 +31,7 @@ jobs:
       - name: Bootstrap locked actionlint
         run: tools/bootstrap-ci-tools.sh actionlint
 
-      - name: Validate scripts and deterministic generators
+      - name: Validate scripts, generators, and native policies
         run: |
           actionlint .github/workflows/*.yml
           for script in tools/*.mjs; do node --check "$script"; done
@@ -40,6 +40,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_*.py'
           node --test tests/*.test.mjs
           tools/test-native.sh
+          tools/test-native.sh --tsan
           node tools/gen-assets.mjs
           sha256sum hotspot-arcade-cardputer/{ha_bundle,ha_metadata,ha_proto,ha_json,ha_games}.h > "$RUNNER_TEMP/generated-first.sha256"
           node tools/gen-assets.mjs
