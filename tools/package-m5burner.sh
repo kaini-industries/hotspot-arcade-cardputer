@@ -1,41 +1,106 @@
 #!/usr/bin/env bash
-# Lay the build out the way M5Burner expects, so this repo can be listed in
-# m5stack/M5Stack-Firmware.
-#
-#   tools/build.sh && tools/package-m5burner.sh
-#
-# M5Burner's rule is `filename = name + "_" + flash address`, and it flashes every
-# file in the category folder at the address in its name. Note the ESP32-S3 puts the
-# bootloader at 0x0, not the 0x1000 you see in M5Stack's ESP32 examples.
-#
-# This produces the FULL install: bootloader + partition table + app. It replaces
-# whatever is on the device, M5Launcher included. The launcher-friendly install is
-# the plain app image at 0x170000 -- see README.
+# Build the deterministic M5Burner component directory and archive from validated
+# ESP32-S3 images. All live outputs are replaced as one recoverable transaction.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-SRC="build"
-OUT="firmware/cardputer"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+SRC="$ROOT/build"
+OUT="$ROOT/firmware/cardputer"
+ARCHIVE="$SRC/hotspot-arcade-cardputer-m5burner.zip"
+LOCK="$ROOT/tools/toolchain.lock.json"
+CONFIG="$ROOT/tools/arduino-cli.yaml"
 
-[[ -f "$SRC/hotspot-arcade-cardputer.ino.bin" ]] || { echo "run tools/build.sh first" >&2; exit 1; }
+node tools/validate-release.mjs
+for artifact in \
+  "$SRC/hotspot-arcade-cardputer.ino.bootloader.bin" \
+  "$SRC/hotspot-arcade-cardputer.ino.partitions.bin" \
+  "$SRC/hotspot-arcade-cardputer.ino.bin"; do
+  [[ -s "$artifact" ]] || { echo "required build artifact is missing or empty: $artifact" >&2; exit 1; }
+done
 
-# boot_app0.bin is the initial otadata content and ships with the core, not with
-# the sketch build -- ask arduino-cli where the core lives rather than guessing.
-DATA_DIR="$(arduino-cli config get directories.data 2>/dev/null || true)"
-[[ -n "$DATA_DIR" ]] || DATA_DIR="$HOME/.arduino15"
-BOOT_APP0="$(find "$DATA_DIR/packages/esp32/hardware/esp32" -name boot_app0.bin 2>/dev/null | sort | tail -1)"
-[[ -n "$BOOT_APP0" ]] || { echo "boot_app0.bin not found under $DATA_DIR -- is the esp32 core installed?" >&2; exit 1; }
+ARDUINO_CLI="${ARDUINO_CLI:-$(command -v arduino-cli 2>/dev/null || true)}"
+[[ -n "$ARDUINO_CLI" ]] || { echo "arduino-cli is missing; run tools/bootstrap.sh" >&2; exit 2; }
+DATA_DIR="$($ARDUINO_CLI --config-file "$CONFIG" config get directories.data)"
+[[ "$DATA_DIR" = /* ]] || DATA_DIR="$ROOT/$DATA_DIR"
+BOOT_RELATIVE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["relativeToData"])' "$LOCK")"
+BOOT_EXPECTED_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["sha256"])' "$LOCK")"
+BOOT_EXPECTED_SIZE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["bootApp0"]["size"])' "$LOCK")"
+CORE_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["arduino"]["core"]["version"])' "$LOCK")"
+BOOT_APP0="$DATA_DIR/$BOOT_RELATIVE"
+[[ -s "$BOOT_APP0" ]] || { echo "locked boot_app0.bin is missing: $BOOT_APP0" >&2; exit 2; }
+[[ "$(wc -c < "$BOOT_APP0" | tr -d ' ')" == "$BOOT_EXPECTED_SIZE" ]] || { echo "boot_app0.bin size does not match lock" >&2; exit 2; }
+if command -v shasum >/dev/null 2>&1; then
+  BOOT_ACTUAL_SHA="$(shasum -a 256 "$BOOT_APP0" | awk '{print $1}')"
+else
+  BOOT_ACTUAL_SHA="$(sha256sum "$BOOT_APP0" | awk '{print $1}')"
+fi
+[[ "$BOOT_ACTUAL_SHA" == "$BOOT_EXPECTED_SHA" ]] || { echo "boot_app0.bin hash does not match lock" >&2; exit 2; }
+if ! "$ARDUINO_CLI" --config-file "$CONFIG" core list | awk \
+  -v expected="$CORE_VERSION" '$1 == "esp32:esp32" && $2 == expected { found = 1 } END { exit !found }'; then
+  echo "project-local esp32:esp32@$CORE_VERSION is not installed" >&2
+  exit 2
+fi
 
-mkdir -p "$OUT"
-rm -f "$OUT"/*.bin
+node tools/validate-images.mjs --build "$SRC" --boot-app "$BOOT_APP0"
 
-cp "$SRC/hotspot-arcade-cardputer.ino.bootloader.bin" "$OUT/bootloader_0x0.bin"
-cp "$SRC/hotspot-arcade-cardputer.ino.partitions.bin" "$OUT/partitions_0x8000.bin"
-cp "$BOOT_APP0" "$OUT/boot_app0_0xe000.bin"
-cp "$SRC/hotspot-arcade-cardputer.ino.bin" "$OUT/hotspot-arcade_0x10000.bin"
+mkdir -p "$ROOT/firmware" "$ROOT/.cache"
+STAGE="$(mktemp -d "$ROOT/firmware/.cardputer-stage.XXXXXX")"
+ARCHIVE_STAGE="$(mktemp -d "$ROOT/.cache/m5archive.XXXXXX")"
+ROLLBACK="$(mktemp -d "$ROOT/.cache/m5rollback.XXXXXX")"
+BACKUP="$ROLLBACK/cardputer"
+ARCHIVE_BACKUP="$ROLLBACK/archive.zip"
+cleanup() {
+  if [[ -n "${STAGE:-}" && -d "$STAGE" ]]; then rm -rf "$STAGE"; fi
+  if [[ -n "${ARCHIVE_STAGE:-}" && -d "$ARCHIVE_STAGE" ]]; then rm -rf "$ARCHIVE_STAGE"; fi
+  if [[ -n "${ROLLBACK:-}" && -d "$ROLLBACK" ]]; then rm -rf "$ROLLBACK"; fi
+}
+trap cleanup EXIT
 
-echo "packaged for M5Burner:"
-ls -l "$OUT"
-echo
-echo "m5burner.json version must match the release tag before opening the PR against"
-echo "m5stack/M5Stack-Firmware (add this repo's URL to firmware-repo.list)."
+cp "$SRC/hotspot-arcade-cardputer.ino.bootloader.bin" "$STAGE/bootloader_0x0.bin"
+cp "$SRC/hotspot-arcade-cardputer.ino.partitions.bin" "$STAGE/partitions_0x8000.bin"
+cp "$BOOT_APP0" "$STAGE/boot_app0_0xe000.bin"
+cp "$SRC/hotspot-arcade-cardputer.ino.bin" "$STAGE/hotspot-arcade_0x10000.bin"
+TZ=UTC touch -t 198001010000 "$STAGE"/*.bin
+ARCHIVE_NEW="$ARCHIVE_STAGE/hotspot-arcade-cardputer-m5burner.zip"
+(
+  cd "$STAGE"
+  zip -X -q "$ARCHIVE_NEW" \
+    bootloader_0x0.bin \
+    partitions_0x8000.bin \
+    boot_app0_0xe000.bin \
+    hotspot-arcade_0x10000.bin
+)
+python3 tools/validate_m5_package.py \
+  --build "$SRC" \
+  --components "$STAGE" \
+  --archive "$ARCHIVE_NEW" \
+  --boot-app "$BOOT_APP0"
+
+had_out=false
+had_archive=false
+if [[ -d "$OUT" ]]; then
+  mv "$OUT" "$BACKUP"
+  had_out=true
+fi
+if [[ -f "$ARCHIVE" ]]; then
+  if ! mv "$ARCHIVE" "$ARCHIVE_BACKUP"; then
+    if $had_out; then mv "$BACKUP" "$OUT"; fi
+    exit 3
+  fi
+  had_archive=true
+fi
+if mv "$STAGE" "$OUT" && mv "$ARCHIVE_NEW" "$ARCHIVE"; then
+  STAGE=""
+  rm -rf "$BACKUP"
+  rm -f "$ARCHIVE_BACKUP"
+else
+  if [[ -d "$OUT" ]]; then rm -rf "$OUT"; fi
+  if [[ -f "$ARCHIVE" ]]; then rm -f "$ARCHIVE"; fi
+  if $had_out && [[ -d "$BACKUP" ]]; then mv "$BACKUP" "$OUT"; fi
+  if $had_archive && [[ -f "$ARCHIVE_BACKUP" ]]; then mv "$ARCHIVE_BACKUP" "$ARCHIVE"; fi
+  exit 3
+fi
+
+echo "packaged deterministic M5Burner components and archive:"
+ls -l "$OUT" "$ARCHIVE"

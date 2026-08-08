@@ -1,3 +1,11 @@
+### v0.6.0 — Durable ten-player sessions
+
+- Ten authenticated phone players with stable browser identities, reconnect and takeover support, and a six-digit host join code.
+- Cumulative Cardputer session standings, per-game phone scores, versioned microSD history, power-loss recovery, and restore into a fresh lobby.
+- Planned access-point pauses preserve play state and provide a ten-minute return window.
+- Deterministic, checksum-locked builds with validated ESP32-S3 images, release manifests, provenance, and safer idempotent M5Burner publishing.
+- Scrollable host history/events, storage and connection status, diagnostics, generated game/language metadata, and hardened bounded input handling.
+
 ### v0.5.0 — German, top to bottom + settings overhaul
 
 - 🌍 **Play fully in German** — a language switch in Settings (English / Deutsch). Both the **content** (all six content games, 32 packs) **and the phone interface** are German — buttons, prompts, in-game text, the lot. Pick a language once; the host streams the content and relays the UI language to every phone, English fallback for anything untranslated.
