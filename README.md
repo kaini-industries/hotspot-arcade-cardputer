@@ -4,242 +4,259 @@
 
 # Hotspot Arcade — M5Stack Cardputer
 
-[![CI](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml/badge.svg)](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml)
+[![build](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml/badge.svg)](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml)
 [![latest release](https://img.shields.io/github/v/release/kaini-industries/hotspot-arcade-cardputer?sort=semver)](https://github.com/kaini-industries/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Several offline party games your guests play from their phones. The Cardputer opens a WiFi
-access point and a captive portal, everyone joins and plays in the browser — no app
-to install — and the Cardputer's own screen is the host: lobby, game picker,
-scoreboard, event log.
+Hotspot Arcade turns a Cardputer into an offline party-game host. It creates a Wi-Fi
+access point and captive web app; guests play from phone browsers while the Cardputer
+controls the game, keeps the cumulative standings, and stores session history. No
+internet connection or phone app is required.
 
-<p align="center">
-  <img src="docs/img/photo-2.jpg" alt="Cardputer hosting a round while a phone votes on a Would You Rather pack" width="820">
-</p>
+This Kaini Industries-maintained edition is a Cardputer host port built from the
+[Kaini Industries Hotspot Arcade source](https://github.com/kaini-industries/hotspot-arcade),
+a maintained fork of [Tarik Caramanico's original Hotspot Arcade](https://github.com/tarikbc/hotspot-arcade).
+The original Cardputer port was created by `genkigenki`; both original attributions
+are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPSTREAM.md).
 
-This is the Kaini Industries maintained fork of
-[genkigenki/hotspot-arcade-cardputer](https://github.com/genkigenki/hotspot-arcade-cardputer),
-the original Cardputer host port of
-[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade). The original
-port and upstream engine/client/content attribution are retained.
+## v0.6.0 highlights
 
-If you have a Flipper, use upstream — it is the original and it is excellent.
+- Ten authenticated phone players and five concurrent matches in each 1v1 game.
+- Browser protocol v2 with stable resume identities, duplicate-tab takeover, and a
+  two-minute transient reconnect grace.
+- Open Wi-Fi with a cryptographically generated six-digit party join code.
+- Per-game phone scores and a separate 32-person cumulative Cardputer ledger.
+- Crash-safe active-session recovery, full microSD history, browsing, and restore.
+- Planned AP pause/rename without resetting play, plus a ten-minute return window.
+- Bounded socket admission, flow control, rate limits, typed host events, and live
+  diagnostics.
+- Reproducible, provenance-locked builds with checksums, SPDX SBOM, attestations,
+  strict ESP image validation, and idempotent M5Burner publishing.
 
-## Screenshots
+See [the release notes](docs/RELEASE_NOTES.md), [architecture](docs/ARCHITECTURE.md),
+and [protocol contract](docs/PROTOCOL.md) for details.
 
-**Phone game client** — the web app your guests open in the browser: pick a nickname and an emoji avatar, then play. Same client for every game.
+## Hardware and status
 
-<p align="center">
-  <img src="docs/img/web-landing.png" alt="Landing: nickname and emoji avatar picker" width="19%">
-  <img src="docs/img/web-trivia.png" alt="Trivia: A/B/C/D tiles with a collapsible leaderboard" width="19%">
-  <img src="docs/img/web-wyr.gif" alt="Would You Rather: live A/B vote split" width="19%">
-  <img src="docs/img/web-scramble.png" alt="Word Scramble: unscramble the letters" width="19%">
-  <img src="docs/img/web-kmk.gif" alt="Kiss Marry Kill: tag three people, everyone predicts" width="19%">
-</p>
-<p align="center">
-  <img src="docs/img/web-spectrum.gif" alt="Spectrum: a clue points at a hidden target on a dial" width="19%">
-  <img src="docs/img/web-draw.gif" alt="Draw and Guess" width="19%">
-  <img src="docs/img/web-guesscolor.gif" alt="Guess the Color: dial in the RGB" width="19%">
-  <img src="docs/img/web-connect4.png" alt="Connect Four" width="19%">
-  <img src="docs/img/web-battleship.gif" alt="Battleship" width="19%">
-</p>
+The target is Cardputer **v1**: StampS3 / ESP32-S3FN8, 8 MB flash, no PSRAM. The
+locked release build currently uses 1,413,632 bytes of its 3,342,336-byte app
+partition and 57,472 bytes of static DRAM, leaving 1,928,704 bytes of image headroom
+and 270,208 bytes for stack/heap at link time.
 
-**On the Cardputer** — the host's own screen (captured straight off the device): the live dashboard, the game picker, and the settings screen with the per-device language switch.
-
-<p align="center">
-  <img src="docs/img/cardputer-dashboard.png" alt="Cardputer dashboard: SSID, join URL, live 2-column scoreboard" width="31%">
-  <img src="docs/img/cardputer-games.png" alt="Cardputer game picker with the active game marked" width="31%">
-  <img src="docs/img/cardputer-settings.png" alt="Cardputer settings: audio, language switch, access point" width="31%">
-</p>
+Cardputer ADV is out of scope and unverified because its keyboard controller and
+antenna differ. The automated gates pass, but the v0.6.0 physical acceptance matrix
+(ten-phone soak, power-cut/SD faults, OTA rollback, iOS/Android captive portal, and
+M5Launcher/full-image boot) must be completed on real hardware before release.
 
 ## Install
 
-**Easiest install** (Recommended): The app is in the "M5Burner" catalog and in "Launcher's" catalog. Search for "Hotspot Arcade".
+Release artifacts support two layouts:
 
-**Manual install**: Flash by hand to 0x170000: 
-```bash
-esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
-```
-or you can drop the `.bin` on the microSD and launch it from the launcher.
+- `hotspot-arcade-cardputer.ino.bin` at `0x170000` keeps M5Launcher.
+- `hotspot-arcade-cardputer.full.bin` at `0x0` replaces the whole flash layout.
 
-The Cardputer's stock M5Launcher layout puts
-loaded apps in `ota_0` at `0x170000` and keeps the launcher itself in the test
-partition. Writing only the app image leaves the launcher untouched — you still get
-back into it the usual way, by holding the button at boot.
+```sh
+esptool --chip esp32s3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  write-flash 0x170000 hotspot-arcade-cardputer.ino.bin
 
-**Full install** (replaces everything, launcher included):
-
-```bash
-esptool --chip esp32s3 --port COM7 --baud 921600 write_flash 0x0 hotspot-arcade-cardputer.full.bin
+# Or replace everything, including M5Launcher:
+esptool --chip esp32s3 --port /dev/cu.usbmodemXXXX --baud 921600 \
+  write-flash 0x0 hotspot-arcade-cardputer.full.bin
 ```
 
-Replace `COM7` with your port (`/dev/ttyACM0`, `/dev/cu.usbmodem*`). `esptool` comes
-with the esp32 core, or `pip install esptool`. If the board does not enter download
-mode by itself, hold **G0** on the StampS3 while plugging in USB-C.
+The app image can also be copied to microSD and launched from M5Launcher. If the
+board does not enter download mode automatically, hold G0 on the StampS3 while
+connecting USB-C. Only use artifacts from the Kaini Industries release page and
+verify them against `SHA256SUMS`.
 
-Both images are on the [releases page](../../releases). 
+## Start and join
 
-## Hardware
+At boot, the Cardputer displays the open AP name, `http://192.168.4.1`, and a
+six-digit join code. A guest joins the AP, opens the captive page, chooses a nickname
+and avatar, and enters that code. The browser retains its own random resume token;
+the device stores only a one-way-derived 128-bit identity key.
 
-Cardputer **v1** (StampS3: ESP32-S3FN8, 8MB flash, no PSRAM). Firmware is ~1.2MB of
-a 3.3MB app slot and ~78KB of static RAM, leaving ~250KB free at runtime.
+Known identities can reconnect without re-entering the code. A normal disconnect
+keeps the exact engine seat for 120 seconds. Returning later receives a fresh PID and
+fresh score for the selected game, while the Cardputer's cumulative session score
+remains. A newer connection using the same browser identity takes over from the old
+socket.
 
-Not tested on the Cardputer ADV. It should build, but the ADV has a different
-keyboard controller (TCA8418) and antenna, so treat it as unverified.
+The join code is admission control, not encryption. The AP, HTTP, and WebSocket are
+open, so a nearby observer can read traffic or the displayed code. Do not use it for
+private data. WPA2 is intentionally deferred.
 
-Limit: the v1's antenna is weak — eight phones in a room is fine, range is worse than a dev board with an
-external antenna. 
+## Host controls
 
-## Using it
-
-The AP comes up at boot; there is no start step. Phones join **Hotspot Arcade** (open)
-and land on `http://192.168.4.1` (if not automatically getting there via captive portal).
-The dashboard displays a six-digit party join code for new browsers. A returning
-browser can resume its identity without the code during the session; the code is
-admission control, not encryption, and nearby observers can still read open traffic.
-
-The dashboard is the host view: SSID and IP, whether the AP is up, the active game,
-the live scoreboard, and the last event. Everything else is one key away.
-
-| key | |
+| Key | Action |
 | --- | --- |
-| `G` | choose a game; `;`/`.` move, `Enter` selects, and `S` changes sort order |
-| `L` | browse the cumulative session leaderboard |
-| `H` | browse immutable history, inspect standings, or restore a session |
-| `C` | browse all 24 retained typed host events |
-| `S` | open settings for SSID, audio, language, AP, events, and diagnostics |
-| `D` | open diagnostics directly |
-| `N` | rename the AP after checkpointing and pausing the session |
-| `P` | pause/start the AP, or resume early during its reconnect window |
-| `E` | end the current round |
-| `R` | archive and start a new cumulative session, with confirmation |
-| `Esc` | return toward the dashboard |
+| `G` | Choose a game; `;`/`.` move, `Enter` selects, `S` changes sort order. |
+| `L` | Browse the cumulative session leaderboard. |
+| `H` | Browse immutable history newest-first; inspect or restore a session. |
+| `C` | Browse all 24 retained typed host events. |
+| `S` | Open settings for SSID, audio, locale, AP, events, and diagnostics. |
+| `D` | Open diagnostics directly. |
+| `N` | Rename the AP using a planned pause and checkpoint. |
+| `P` | Pause/start the AP, or resume early during the reconnect window. |
+| `E` | End the current round. |
+| `R` | Archive and start a new cumulative session, with confirmation. |
+| `Esc` | Return toward the dashboard. |
 
-Serial at 115200 prints the AP address, asset counts and free heap at boot.
+Changing the SSID or stopping the AP freezes the logical game clock and checkpoints
+the session before transport teardown. Manual AP-off remains paused indefinitely.
+After restart the host waits up to ten minutes for required players, resumes when
+they return, or lets the host resume/end early. If a new SSID fails, the prior SSID
+is restored.
 
-Games: trivia, would-you-rather, word scramble, spectrum, kiss marry kill, reaction duel,
-connect four, tic-tac-toe, dots & boxes, reversi, drawing, pong, guess the color,
-battleship, chess — fifteen in all. Every one is phone-driven; the host picks which is
-live and watches.
+## Scores, restart, and history
 
-## Session scores and recovery
+- Phones show scores for the currently selected game only.
+- The Cardputer ledger accumulates awards across games until **New Session**.
+- A reboot restores identities, names, avatars, cumulative scores, and the selected
+  game, but starts that game in a fresh lobby with phone scores at zero.
+- History records never change. Restoring one archives the current nonempty session,
+  creates a new active session with `restored_from`, restores cumulative standings,
+  and opens the prior selected game in a fresh lobby.
+- Chat, Draw strokes, transient events, raw resume tokens, and an in-progress round
+  are never persisted.
 
-Phones show scores for the selected game; the Cardputer keeps a separate cumulative
-ledger until **New Session**. A reboot restores known identities, names, avatars,
-cumulative scores, and the selected game, then opens that game in a fresh lobby with
-phone scores reset. An in-progress round, chat, Draw strokes, and the host event log
-are transient.
+With microSD, config and active records alternate between CRC-checked A/B slots and
+history is retained without automatic pruning:
 
-With microSD, configuration and active state alternate between CRC-checked A/B
-slots, while completed sessions are immutable files under
-`/hotspot-arcade/history/` and are never pruned automatically. Restoring history
-archives the current nonempty session first, creates a distinct active session with
-`restored_from`, and restores its cumulative standings into a fresh lobby.
+```text
+/hotspot-arcade/config.a
+/hotspot-arcade/config.b
+/hotspot-arcade/active.a
+/hotspot-arcade/active.b
+/hotspot-arcade/history/S00000001.ha
+/hotspot-arcade/history/index.bin
+/hotspot-arcade/migration-v2.done
+```
 
-Without microSD, NVS retains settings and a bounded active-session fallback, but no
-history; abrupt power loss may lose up to 30 seconds of recent changes. If archiving
-fails or storage is full, the firmware preserves the active session unless the host
-explicitly confirms discarding it a second time. The Diagnostics screen reports
-heap, queue, rate-limit, loop, lock, SD, and checkpoint health.
+Without microSD, NVS keeps settings and a bounded active-session fallback. Abrupt
+power loss can lose up to 30 seconds of recent changes, and history is unavailable.
+The device never silently deletes a nonempty active session when archiving fails; a
+second explicit discard confirmation is required.
 
-## Developer setup and build
+## Games
 
-The supported host baseline is macOS Apple Silicon or Linux x64. Node, Arduino,
-and downloaded dependencies are pinned by `.nvmrc` and
-`tools/toolchain.lock.json`; project-local Arduino data lives under
-`.cache/arduino` and bootstrapped executables live under `.tools`.
+The fifteen phone-driven games are Trivia, Would You Rather, Word Scramble,
+Spectrum, Kiss Marry Kill, Reaction Duel, Connect Four, Tic-Tac-Toe, Dots & Boxes,
+Reversi, Draw and Guess, Pong, Guess the Color, Battleship, and Chess. Content and
+phone UI are available in English, German, and the currently supplied Portuguese
+Brazil packs, with per-game English fallback where a translation is absent.
+
+## Developer setup
+
+The supported host baseline is macOS Apple Silicon or Linux x64. No PlatformIO,
+Docker, Playwright, or `jq` is required.
 
 ```sh
 nvm install 24.19.0
 nvm use 24.19.0
 brew install arduino-cli esptool emscripten actionlint
+gh auth login -h github.com                  # needed only for GitHub release work
 git clone https://github.com/kaini-industries/hotspot-arcade.git ../hotspot-arcade
 
-tools/bootstrap.sh
+tools/bootstrap.sh                           # project-local Arduino core/libraries
 tools/doctor.sh
 tools/build.sh
 ```
 
-`tools/bootstrap-node.sh` is the checksum-verifying alternative to `nvm` used by
-CI. `tools/bootstrap.sh` installs Arduino CLI 1.5.1, ESP32 core 3.3.11,
-M5Cardputer 1.1.1, M5Unified 0.2.19, M5GFX 0.2.26, and every resolved transitive
-library from reviewed archive hashes. Emscripten 6.0.2 is available through
-`tools/bootstrap-simulator.sh`. PlatformIO, Docker, Playwright, and `jq` are not
-required.
+`tools/bootstrap-node.sh` is the checksum-verifying alternative to `nvm` and is
+what CI uses for the locked Linux x64 Node archive.
 
-`tools/build.sh --deps` combines bootstrap and build. The FQBN matters:
+`.nvmrc` and `tools/toolchain.lock.json` pin Node 24.19.0, Arduino CLI 1.5.1,
+ESP32 core 3.3.11, esptool 5.3.1, Emscripten 6.0.2, actionlint 1.7.12,
+Syft 1.50.0, Cosign 3.0.6, the CI GitHub CLI 2.93.0, M5Cardputer 1.1.1,
+M5Unified 0.2.19, M5GFX 0.2.26, every resolved transitive Arduino dependency,
+and downloaded archive hashes. Arduino data and downloads stay inside
+`.cache/arduino`; bootstrapped host tools stay under `.tools`. Syft and Cosign are
+optional on developer Macs; CI installs their checksum-pinned Linux binaries with
+`tools/bootstrap-ci-tools.sh`.
 
+Run the local gates with:
+
+```sh
+tools/test-native.sh
+tools/test-native.sh --tsan
+python3 -m unittest discover -s tests -p 'test_*.py'
+node --test tests/*.test.mjs
+actionlint
+shellcheck tools/*.sh
 ```
-esp32:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB
-```
 
-The board's *default* partition scheme is the 4MB one with a 1.2MB app slot, which
-this firmware does not fit in.
+The native suite uses ASan/UBSan by default and TSan for the bounded asynchronous
+queue on Linux. `tools/build-release-candidate.sh` performs the locked image,
+package, SBOM, manifest, checksum, and provenance gates with
+`SOURCE_DATE_EPOCH` set.
+It requires an explicit tag, rejects a dirty checkout, marks `-rc.N` builds as
+unpublishable candidates, and requires a final tag to resolve to the packaged
+commit.
 
-## How it relates to upstream
+## Architecture
 
-| | upstream (Flipper + ESP board) | here |
-| --- | --- | --- |
-| game engine | `esp32/hotspot-arcade-fw/ha_games.h` | the same file, unmodified |
-| phone client | streamed over UART at session start | baked into flash |
-| content packs | read off the Flipper's SD, streamed | baked into flash |
-| host reports | UART v2 frames (`docs/PROTOCOL.md`) | same, but simply called in-process |
-| host UI | Flipper scenes, 128×64 mono | `ha_ui.h`, 240×135 colour + keyboard |
+The implementation has five logical modules:
 
-The engine reaches its host through six sink functions. This port implements them as direct calls into a local mirror.
+1. **Runtime and transport** — `hotspot-arcade-cardputer.ino`,
+   `ha_network_policy.h`, and `ha_runtime_types.h` own Wi-Fi, DNS, WebSockets,
+   admission, AP lifecycle, flow control, and loop scheduling.
+2. **Engine and host mirror** — `vendor/engine/`, `ha_host.h`, and
+   `ha_event_format.h` own authoritative game state, stable identities, cumulative
+   awards, bounded typed events, and UI snapshots.
+3. **Content** — `ha_content.h`, generated metadata/assets, and the explicit content
+   manifest implement transactional locale/game content replacement.
+4. **Recovery** — `ha_config.h`, `ha_active_nvs.h`, and `ha_history.h` implement
+   redundant SD/NVS records, migration, immutable archives, and restore.
+5. **Host presentation** — `ha_ui.h`, `ha_diagnostics.h`, and `ha_async_queue.h`
+   implement the 240×135 UI, 8-bit/direct-draw fallback, diagnostics, and bounded
+   loop-task work queues.
 
-New code lives in four files under `hotspot-arcade-cardputer/`:
+Engine/session/mirror state is protected by one recursive mutex; UI and persistence
+operate on snapshots, and display, speaker, SD, DNS, and AP I/O stay outside that
+critical section. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-| | |
-| --- | --- |
-| `hotspot-arcade-cardputer.ino` | AP, captive portal, WebSocket, the six sinks |
-| `ha_ui.h` | five screens + keyboard |
-| `ha_host.h` | roster / score / event mirror |
-| `ha_content.h` | baked-pack parser (a port of upstream's `content_stream_pack()`) |
+## Upstream and vendoring
 
-## Staying in sync
-
-**The rule: nothing under `vendor/` is edited here.** Engine, browser, content,
-and library files are copied from one committed object in the
-[Kaini Industries Hotspot Arcade source](https://github.com/kaini-industries/hotspot-arcade),
-a maintained fork of Tarik Caramanico's original project. The exact commit and a
-per-file SHA-256 inventory are recorded in [UPSTREAM.md](UPSTREAM.md) and
-`UPSTREAM.lock.json`.
+Nothing under `vendor/` is edited downstream. Protocol, engine, simulator, and phone
+client changes are developed in the sibling Kaini-maintained source checkout first,
+then copied from committed Git objects only. That repository remains a fork of Tarik
+Caramanico's original project so selected changes can still be proposed upstream:
 
 ```sh
 node tools/sync-upstream.mjs \
   --repo ../hotspot-arcade \
-  --commit 25ad21523c9a66eb712911545792ee8ebf6281ad
+  --commit aad6e8ffa03a125aa4d6be14030a3f887d5cde05
 node tools/gen-assets.mjs
-node tools/gen-assets.mjs --check
 ```
 
-The sync requires clean source and destination checkouts, the reviewed canonical
-repository URL, and an explicit 40-character commit. It reads committed Git
-objects rather than the source working tree, normalizes reviewed packs into
-`vendor/packs/<language>/<game>/`, replaces all vendor destinations atomically,
-and rejects missing, unknown, unsafe, or malformed content. The generator uses
-UTF-8 byte counts and creates deterministic web/content data, game/language
-metadata, and the three engine headers in the sketch directory. Those generated
-headers are ignored and must not be edited by hand.
+The sync requires clean checkouts, the reviewed canonical Kaini source URL, and an
+explicit 40-character commit. It replaces all vendor destinations atomically and
+writes a deterministic per-file hash inventory in `UPSTREAM.lock.json`. Releases
+remain pinned to a reviewed commit in `kaini-industries/hotspot-arcade`, independent
+of whether a corresponding contribution has merged into the original project.
 
-## Distribution
+## Release process
 
-Release publication is intentionally frozen while the `v0.6.0` safety and
-reproducibility gates are assembled. The release workflow is manual-only and
-does not build, tag, upload, publish, or read publishing secrets. Do not create
-new release tags until the complete release gate lands.
+`VERSION` is the single release version source and is currently `0.6.0`. CI is
+read-only. Tagged release jobs separately attest, create a draft GitHub release, and
+publish through the protected `production` environment; M5Burner publication is
+idempotent and the GitHub release is finalized only after catalog verification.
 
-Existing releases and catalog entries remain available, but this branch does
-not mutate them. `tools/m5burner_post.py` is the fail-closed publisher that the
-final gated workflow will invoke.
+The intended cutover is:
 
-## Status
+1. Build/test `0.6.0-rc.1` with workflow dispatch and no publication.
+2. Complete the Cardputer v1 + microSD hardware acceptance matrix.
+3. Tag `v0.6.0` and create the draft release.
+4. Publish to M5Burner and verify the exact catalog version.
+5. Finalize the GitHub release.
 
-Unverified: the Cardputer ADV, and long sessions with many many phones.
+Do not create new tags until the hardened release workflow and catalog identity are
+reviewed on the canonical repository.
 
-## License
+## License and attribution
 
-MIT — see [LICENSE](LICENSE). Kaini Industries, genkigenki, and Tarik Caramanico
-attribution is retained. `vendor/libs/` holds third-party libraries under their
-own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The project is MIT-licensed; see [LICENSE](LICENSE). Tarik Caramanico's upstream
+engine/client/content and `genkigenki`'s original Cardputer work remain attributed.
+Vendored AsyncTCP and ESPAsyncWebServer retain their LGPL-3.0 notices and license
+texts; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
