@@ -16,7 +16,13 @@
 #define PROGMEM
 #endif
 
-#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__)
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 38)
+#define HA_NATIVE_HAS_STRLCPY 1
+#endif
+#endif
+
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__) && !defined(HA_NATIVE_HAS_STRLCPY)
 static inline size_t strlcpy(char* destination, const char* source, size_t capacity) {
     const size_t length = std::strlen(source);
     if(capacity) {
@@ -27,3 +33,5 @@ static inline size_t strlcpy(char* destination, const char* source, size_t capac
     return length;
 }
 #endif
+
+#undef HA_NATIVE_HAS_STRLCPY

@@ -263,6 +263,11 @@ test('fresh detached candidates generate headers and share the locked Arduino da
   assert.ok(firstGeneration >= 0 && firstGeneration < build && build < finalCheck);
   assert.match(candidate, /--tag is required/);
 
+  const nativeTests = readFileSync(join(root, 'tools', 'test-native.sh'), 'utf8');
+  assert.match(nativeTests, /tools\/gen-assets\.mjs/);
+  const arduinoShim = readFileSync(join(root, 'tests', 'native', 'include', 'Arduino.h'), 'utf8');
+  assert.match(arduinoShim, /__GLIBC_PREREQ\(2, 38\)/);
+
   const budgets = readFileSync(join(root, 'tools', 'check-build-budgets.mjs'), 'utf8');
   assert.match(budgets, /process\.env\.ARDUINO_DIRECTORIES_DATA/);
   assert.match(readFileSync(join(root, 'tools', 'build.sh'), 'utf8'), /compile \\\n  --clean \\/);

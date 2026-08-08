@@ -5,6 +5,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p .cache/native
 
+NATIVE_NODE="${NODE:-}"
+if [[ -z "$NATIVE_NODE" ]]; then
+  if [[ -x "$ROOT/.tools/node/bin/node" ]]; then
+    NATIVE_NODE="$ROOT/.tools/node/bin/node"
+  else
+    NATIVE_NODE="$(command -v node)"
+  fi
+fi
+"$NATIVE_NODE" tools/gen-assets.mjs
+
 CLANG="${CXX:-clang++}"
 
 if [ "${1:-}" = "--tsan" ]; then
