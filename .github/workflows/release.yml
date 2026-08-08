@@ -1,0 +1,20 @@
+name: release (publishing frozen)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publishing-frozen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Confirm the release freeze
+        run: |
+          test "$(tr -d '[:space:]' < VERSION)" = "0.6.0"
+          printf '%s\n' 'Publishing remains frozen until the v0.6.0 release gates land.'

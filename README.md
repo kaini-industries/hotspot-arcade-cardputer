@@ -4,8 +4,8 @@
 
 # Hotspot Arcade — M5Stack Cardputer
 
-[![build](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml/badge.svg)](https://github.com/genkigenki/hotspot-arcade-cardputer/actions/workflows/build.yml)
-[![latest release](https://img.shields.io/github/v/release/genkigenki/hotspot-arcade-cardputer?sort=semver)](https://github.com/genkigenki/hotspot-arcade-cardputer/releases/latest)
+[![CI](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml/badge.svg)](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml)
+[![latest release](https://img.shields.io/github/v/release/kaini-industries/hotspot-arcade-cardputer?sort=semver)](https://github.com/kaini-industries/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Several offline party games your guests play from their phones. The Cardputer opens a WiFi
@@ -17,8 +17,11 @@ scoreboard, event log.
   <img src="docs/img/photo-2.jpg" alt="Cardputer hosting a round while a phone votes on a Would You Rather pack" width="820">
 </p>
 
-This is a **host port** of [tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade),
-which runs the same games as a Flipper Zero app.
+This is the Kaini Industries maintained fork of
+[genkigenki/hotspot-arcade-cardputer](https://github.com/genkigenki/hotspot-arcade-cardputer),
+the original Cardputer host port of
+[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade). The original
+port and upstream engine/client/content attribution are retained.
 
 If you have a Flipper, use upstream — it is the original and it is excellent.
 
@@ -170,10 +173,14 @@ resolve — those copies are generated and carry a banner saying so.
 
 ## Distribution
 
-- **Releases** — the app image and the trimmed full image, built and published on every `v*` tag.
-- **M5Burner** — listed in the catalog. Tagged releases auto-publish a new version when the
-  `M5BURNER_USER` / `M5BURNER_PWD` repo secrets are set (via `tools/m5burner_post.py`).
-- **M5Launcher / LauncherHub** — in the catalog; mirrored automatically from M5Burner.
+Release publication is intentionally frozen while the `v0.6.0` safety and
+reproducibility gates are assembled. The release workflow is manual-only and
+does not build, tag, upload, publish, or read publishing secrets. Do not create
+new release tags until the complete release gate lands.
+
+Existing releases and catalog entries remain available, but this branch does
+not mutate them. `tools/m5burner_post.py` is the fail-closed publisher that the
+final gated workflow will invoke.
 
 ## Status
 
@@ -181,5 +188,6 @@ Unverified: the Cardputer ADV, and long sessions with many many phones.
 
 ## License
 
-MIT — see [LICENSE](LICENSE), same as upstream. `vendor/libs/` holds third-party
-libraries under their own licenses.
+MIT — see [LICENSE](LICENSE). Kaini Industries, genkigenki, and Tarik Caramanico
+attribution is retained. `vendor/libs/` holds third-party libraries under their
+own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
