@@ -65,4 +65,3 @@ static inline HaHostEventDisposition haFormatHostEvent(
     output[capacity - 1] = '\0';
     return disposition;
 }
-

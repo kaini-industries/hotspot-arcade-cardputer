@@ -25,8 +25,10 @@ class M5BurnerPackageTests(unittest.TestCase):
         shutil.copy(ROOT / "tools" / "validate-images.mjs", fixture / "tools")
         shutil.copy(ROOT / "tools" / "validate_m5_package.py", fixture / "tools")
         shutil.copy(ROOT / "tools" / "arduino-cli.yaml", fixture / "tools")
+        shutil.copy(ROOT / "tools" / "upstream-source.json", fixture / "tools")
         shutil.copy(ROOT / "VERSION", fixture)
         shutil.copy(ROOT / "README.md", fixture)
+        shutil.copy(ROOT / "UPSTREAM.lock.json", fixture)
         shutil.copy(ROOT / "m5burner.json", fixture)
         shutil.copy(ROOT / "docs" / "RELEASE_NOTES.md", fixture / "docs")
 

@@ -50,7 +50,7 @@ test('sync copies only the exact commit and records a complete deterministic loc
   const downstream = join(temporary, 'downstream');
   try {
     initRepository(upstream);
-    git(upstream, 'remote', 'add', 'origin', 'https://github.com/tarikbc/hotspot-arcade.git');
+    git(upstream, 'remote', 'add', 'origin', 'https://github.com/kaini-industries/hotspot-arcade.git');
     for (const name of ['ha_proto.h', 'ha_json.h', 'ha_games.h']) {
       put(join(upstream, 'esp32', 'hotspot-arcade-fw', name), `// committed ${name}\n`);
     }
@@ -88,7 +88,7 @@ test('sync copies only the exact commit and records a complete deterministic loc
 
     git(upstream, 'remote', 'set-url', 'origin', 'https://github.com/example/hostile.git');
     failure(() => run(node, ['tools/sync-upstream.mjs', '--repo', upstream, '--commit', commit], downstream), /origin must be/);
-    git(upstream, 'remote', 'set-url', 'origin', 'https://github.com/tarikbc/hotspot-arcade.git');
+    git(upstream, 'remote', 'set-url', 'origin', 'https://github.com/kaini-industries/hotspot-arcade.git');
 
     put(join(upstream, 'UNTRACKED'), 'dirty\n');
     failure(() => run(node, ['tools/sync-upstream.mjs', '--repo', upstream, '--commit', commit], downstream), /upstream checkout must be clean/);
@@ -104,6 +104,13 @@ test('sync copies only the exact commit and records a complete deterministic loc
     assert.equal(git(upstream, 'status', '--porcelain=v1', '--untracked-files=all'), '');
 
     run(node, ['tools/sync-upstream.mjs', '--repo', upstream, '--commit', commit], downstream);
+    const firstLockDocument = readFileSync(join(downstream, 'UPSTREAM.lock.json'), 'utf8');
+    const firstUpstreamDocument = readFileSync(join(downstream, 'UPSTREAM.md'), 'utf8');
+    commitAll(downstream, 'first deterministic sync');
+    run(node, ['tools/sync-upstream.mjs', '--repo', upstream, '--commit', commit], downstream);
+    assert.equal(git(downstream, 'status', '--porcelain=v1', '--untracked-files=all'), '');
+    assert.equal(readFileSync(join(downstream, 'UPSTREAM.lock.json'), 'utf8'), firstLockDocument);
+    assert.equal(readFileSync(join(downstream, 'UPSTREAM.md'), 'utf8'), firstUpstreamDocument);
     assert.equal(readFileSync(join(downstream, 'vendor', 'engine', 'ha_proto.h'), 'utf8'), '// committed ha_proto.h\n');
     for (const directory of ['engine', 'web', 'packs', 'libs']) {
       assert.equal(existsSync(join(downstream, 'vendor', directory, 'obsolete.txt')), false, `${directory} was not fully replaced`);
@@ -116,7 +123,7 @@ test('sync copies only the exact commit and records a complete deterministic loc
     }
     assert.equal(existsSync(join(downstream, 'vendor', 'packs', 'README.md')), false);
     const lock = JSON.parse(readFileSync(join(downstream, 'UPSTREAM.lock.json'), 'utf8'));
-    assert.equal(lock.repository, 'https://github.com/tarikbc/hotspot-arcade');
+    assert.equal(lock.repository, 'https://github.com/kaini-industries/hotspot-arcade');
     assert.equal(lock.commit, commit);
     assert.ok(lock.files.length > 10);
     assert.deepEqual(lock.files.map((file) => file.path), [...lock.files.map((file) => file.path)].sort());
@@ -127,7 +134,10 @@ test('sync copies only the exact commit and records a complete deterministic loc
     }
     const treeMaterial = lock.files.map((file) => `${file.sha256}  ${file.size}  ${file.path}\n`).join('');
     assert.equal(lock.sourceTreeSha256, createHash('sha256').update(treeMaterial).digest('hex'));
-    assert.match(readFileSync(join(downstream, 'UPSTREAM.md'), 'utf8'), new RegExp(commit));
+    const upstreamDocument = readFileSync(join(downstream, 'UPSTREAM.md'), 'utf8');
+    assert.match(upstreamDocument, new RegExp(commit));
+    assert.match(upstreamDocument, /kaini-industries\/hotspot-arcade/);
+    assert.match(upstreamDocument, /Tarik Caramanico's original hotspot-arcade/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

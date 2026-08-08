@@ -1,11 +1,11 @@
 # Upstream
 
 Everything under `vendor/` is copied from one committed Git object in
-[tarikbc/hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT, Tarik Caramanico). Third-party libraries retain their own license files. No file in `vendor/` is edited downstream.
+[kaini-industries/hotspot-arcade](https://github.com/kaini-industries/hotspot-arcade), a Kaini Industries-maintained fork of [Tarik Caramanico's original hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT). Third-party libraries retain their own license files. No file in `vendor/` is edited downstream.
 
 | | |
 | --- | --- |
-| repository | `https://github.com/tarikbc/hotspot-arcade` |
+| repository | `https://github.com/kaini-industries/hotspot-arcade` |
 | commit | `aad6e8ffa03a125aa4d6be14030a3f887d5cde05` |
 | describe | `v1.6.0-7-gaad6e8f` |
 | source tree SHA-256 | `48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606` |

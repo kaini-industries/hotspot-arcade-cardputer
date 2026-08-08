@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 export const CANONICAL_REPOSITORY = 'https://github.com/kaini-industries/hotspot-arcade-cardputer';
 export const CANONICAL_AUTHOR = 'kaini-industries';
 export const CANONICAL_REPOSITORY_SLUG = 'kaini-industries/hotspot-arcade-cardputer';
+export const CANONICAL_UPSTREAM_REPOSITORY = 'https://github.com/kaini-industries/hotspot-arcade';
 export const RELEASE_ARTIFACTS = [
   'hotspot-arcade-cardputer.ino.bin',
   'hotspot-arcade-cardputer.full.bin',
@@ -121,12 +122,28 @@ export function validateRelease(
     errors.push(`m5burner.json author must be ${CANONICAL_AUTHOR}; got ${manifest.author ?? '(missing)'}`);
   }
 
+  for (const path of ['tools/upstream-source.json', 'UPSTREAM.lock.json']) {
+    try {
+      const upstream = JSON.parse(readFileSync(join(repoRoot, path), 'utf8'));
+      if (upstream.repository !== CANONICAL_UPSTREAM_REPOSITORY) {
+        errors.push(
+          `${path} repository must be ${CANONICAL_UPSTREAM_REPOSITORY}; got ${upstream.repository ?? '(missing)'}`,
+        );
+      }
+    } catch (error) {
+      errors.push(`cannot parse ${path}: ${error.message}`);
+    }
+  }
+
   const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
   if (!readme.includes('github.com/kaini-industries/hotspot-arcade-cardputer')) {
     errors.push('README.md does not point at the canonical Kaini Industries repository');
   }
-  if (!readme.includes('tarikbc/hotspot-arcade')) {
-    errors.push('README.md is missing upstream tarikbc/hotspot-arcade attribution');
+  if (!readme.includes(`](${CANONICAL_UPSTREAM_REPOSITORY})`)) {
+    errors.push('README.md is missing the maintained Kaini Hotspot Arcade source');
+  }
+  if (!readme.includes('](https://github.com/tarikbc/hotspot-arcade)')) {
+    errors.push('README.md is missing original tarikbc/hotspot-arcade attribution');
   }
 
   if (requireArtifacts && !artifactsDir) errors.push('--require-artifacts requires --artifacts-dir');

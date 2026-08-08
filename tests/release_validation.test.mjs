@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CANONICAL_REPOSITORY,
   CANONICAL_REPOSITORY_SLUG,
+  CANONICAL_UPSTREAM_REPOSITORY,
   validateRelease,
 } from '../tools/validate-release.mjs';
 import { readCleanGitSource, verifyFinalTag } from '../tools/release-provenance.mjs';
@@ -23,6 +24,9 @@ test('checked-in release identity and version are internally consistent', () => 
   });
   assert.equal(result.version, '0.6.0');
   assert.equal(result.repository, CANONICAL_REPOSITORY);
+  for (const path of ['tools/upstream-source.json', 'UPSTREAM.lock.json']) {
+    assert.equal(JSON.parse(readFileSync(join(root, path), 'utf8')).repository, CANONICAL_UPSTREAM_REPOSITORY);
+  }
 });
 
 test('a release from a non-canonical repository is rejected', () => {

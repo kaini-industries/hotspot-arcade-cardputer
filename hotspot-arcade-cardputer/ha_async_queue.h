@@ -85,4 +85,3 @@ private:
     mutable std::mutex _mux;
 #endif
 };
-

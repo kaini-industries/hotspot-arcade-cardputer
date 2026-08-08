@@ -20,4 +20,3 @@ struct HaDiagnostics {
     uint8_t wsAuthenticated;
     uint8_t wsPending;
 };
-

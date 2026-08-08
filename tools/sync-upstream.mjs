@@ -250,7 +250,8 @@ try {
   };
   const lockText = `${JSON.stringify(lock, null, 2)}\n`;
   const upstreamText = `# Upstream\n\nEverything under \`vendor/\` is copied from one committed Git object in\n` +
-    `[tarikbc/hotspot-arcade](${expectedRemote}) (MIT, Tarik Caramanico). ` +
+    `[kaini-industries/hotspot-arcade](${expectedRemote}), a Kaini Industries-maintained fork of ` +
+    `[Tarik Caramanico's original hotspot-arcade](https://github.com/tarikbc/hotspot-arcade) (MIT). ` +
     `Third-party libraries retain their own license files. No file in \`vendor/\` is edited downstream.\n\n` +
     `| | |\n| --- | --- |\n| repository | \`${expectedRemote}\` |\n| commit | \`${requestedCommit}\` |\n` +
     `| describe | \`${describe}\` |\n| source tree SHA-256 | \`${sourceTreeSha256}\` |\n` +

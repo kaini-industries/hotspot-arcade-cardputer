@@ -155,4 +155,3 @@ static inline bool haSocketHelloExpired(const HaSocketSlot& slot, uint32_t now) 
     return slot.used && !slot.authenticated &&
            (uint32_t)(now - slot.connectedAtMs) >= HA_WS_HELLO_DEADLINE_MS;
 }
-

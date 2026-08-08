@@ -13,10 +13,11 @@ access point and captive web app; guests play from phone browsers while the Card
 controls the game, keeps the cumulative standings, and stores session history. No
 internet connection or phone app is required.
 
-This Kaini Industries-maintained edition is a Cardputer host port of
-[Tarik Caramanico's Hotspot Arcade](https://github.com/tarikbc/hotspot-arcade). The
-original Cardputer port was created by `genkigenki`; both attributions are retained.
-The exact unmodified upstream source is pinned in [UPSTREAM.md](UPSTREAM.md).
+This Kaini Industries-maintained edition is a Cardputer host port built from the
+[Kaini Industries Hotspot Arcade source](https://github.com/kaini-industries/hotspot-arcade),
+a maintained fork of [Tarik Caramanico's original Hotspot Arcade](https://github.com/tarikbc/hotspot-arcade).
+The original Cardputer port was created by `genkigenki`; both original attributions
+are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPSTREAM.md).
 
 ## v0.6.0 highlights
 
@@ -155,7 +156,7 @@ nvm install 24.19.0
 nvm use 24.19.0
 brew install arduino-cli esptool emscripten actionlint
 gh auth login -h github.com                  # needed only for GitHub release work
-git clone https://github.com/tarikbc/hotspot-arcade.git ../hotspot-arcade
+git clone https://github.com/kaini-industries/hotspot-arcade.git ../hotspot-arcade
 
 tools/bootstrap.sh                           # project-local Arduino core/libraries
 tools/doctor.sh
@@ -218,8 +219,9 @@ critical section. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Upstream and vendoring
 
 Nothing under `vendor/` is edited downstream. Protocol, engine, simulator, and phone
-client changes are contributed in the sibling upstream checkout first, then copied
-from committed Git objects only:
+client changes are developed in the sibling Kaini-maintained source checkout first,
+then copied from committed Git objects only. That repository remains a fork of Tarik
+Caramanico's original project so selected changes can still be proposed upstream:
 
 ```sh
 node tools/sync-upstream.mjs \
@@ -228,12 +230,11 @@ node tools/sync-upstream.mjs \
 node tools/gen-assets.mjs
 ```
 
-The sync requires clean checkouts, the reviewed canonical URL, and an explicit
-40-character commit. It replaces all vendor destinations atomically and writes a
-deterministic per-file hash inventory in `UPSTREAM.lock.json`. If the upstream change
-is declined, or receives no response for 14 days plus one follow-up, the same commit
-will move to the maintained `kaini-industries/hotspot-arcade` fork and downstream
-provenance will be updated before release.
+The sync requires clean checkouts, the reviewed canonical Kaini source URL, and an
+explicit 40-character commit. It replaces all vendor destinations atomically and
+writes a deterministic per-file hash inventory in `UPSTREAM.lock.json`. Releases
+remain pinned to a reviewed commit in `kaini-industries/hotspot-arcade`, independent
+of whether a corresponding contribution has merged into the original project.
 
 ## Release process
 
