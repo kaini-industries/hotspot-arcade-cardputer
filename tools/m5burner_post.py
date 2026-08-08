@@ -35,6 +35,9 @@ TAG_RE = re.compile(
 VERSION_FILE = Path(__file__).resolve().parents[1] / "VERSION"
 BUILD_MANIFEST_NAME = "build-manifest.json"
 FILE_ID_RE = re.compile(r"^[0-9A-Za-z._-]{1,128}$")
+# The trimmed full image ends at the 8 MiB layout's application partition limit:
+# app offset 0x10000 plus the locked 0x330000 application partition.
+MAX_FIRMWARE_BYTES = 0x340000
 
 
 # M5Burner catalog firmware ID -> release artifact filename.
@@ -193,6 +196,7 @@ def validate_artifacts(
     manifest_path: Path | None = None,
     *,
     expected_version: str | None = None,
+    expected_commit: str | None = None,
 ) -> dict[str, Path]:
     if not artifacts_dir.is_dir():
         raise ValidationError(f"artifacts directory does not exist: {artifacts_dir}")
@@ -221,6 +225,11 @@ def validate_artifacts(
         r"[0-9a-f]{40}", manifest["commit"]
     ):
         raise ValidationError("build manifest source commit is not a full Git object ID")
+    if expected_commit is not None:
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
+            raise ValidationError("expected source commit is not a full Git object ID")
+        if manifest["commit"] != expected_commit:
+            raise ValidationError("build manifest source commit does not match the release checkout")
     if manifest.get("sourceTreeClean") is not True:
         raise ValidationError("build manifest was not produced from a clean source checkout")
     if manifest.get("candidate") is not False:
@@ -235,6 +244,10 @@ def validate_artifacts(
         actual_size = path.stat().st_size
         if actual_size == 0:
             raise ValidationError(f"required firmware artifact is empty: {path}")
+        if actual_size > MAX_FIRMWARE_BYTES:
+            raise ValidationError(
+                f"required firmware artifact exceeds {MAX_FIRMWARE_BYTES} bytes: {path}"
+            )
         expected = checksums.get(filename)
         if not expected:
             raise ValidationError(f"{filename} is missing from {checksums_path}")
@@ -505,6 +518,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Upload and publish firmware to M5Burner")
     parser.add_argument("--tag", required=True, help="release tag, for example v0.6.0")
     parser.add_argument(
+        "--expected-commit",
+        required=True,
+        help="full source commit verified from the release tag",
+    )
+    parser.add_argument(
         "--api-base-url",
         default=API_BASE_URL,
         help=f"M5Burner API URL; only {API_BASE_URL} is accepted",
@@ -540,6 +558,8 @@ def main(argv=None, environ=None, client_factory=M5BurnerClient) -> int:
             raise ValidationError(f"cannot read release VERSION file: {exc}") from exc
         if args.tag != expected_tag:
             raise ValidationError(f"release tag {args.tag} does not match VERSION {expected_tag}")
+        if not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit):
+            raise ValidationError("--expected-commit must be a full lowercase Git object ID")
         username = environ.get("M5BURNER_USER", "")
         password = environ.get("M5BURNER_PWD", "")
         if not username or not password:
@@ -555,6 +575,7 @@ def main(argv=None, environ=None, client_factory=M5BurnerClient) -> int:
             checksums_path,
             manifest_path,
             expected_version=args.tag.removeprefix("v"),
+            expected_commit=args.expected_commit,
         )
 
         if args.output:

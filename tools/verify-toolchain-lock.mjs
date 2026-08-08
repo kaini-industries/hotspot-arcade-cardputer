@@ -32,6 +32,22 @@ for (const field of ['installerCommit', 'sdkReleaseCommit']) {
 const nvmrc = readFileSync(join(root, '.nvmrc'), 'utf8').trim();
 if (nvmrc !== lock.node.version) throw new Error(`.nvmrc ${nvmrc} does not match lock ${lock.node.version}`);
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+for (const nodeTarget of ['darwin-arm64', 'linux-x64']) {
+  const archive = lock.node?.archives?.[nodeTarget];
+  if (
+    typeof archive?.url !== 'string' ||
+    !archive.url.startsWith(`https://nodejs.org/dist/v${lock.node.version}/`) ||
+    typeof archive?.file !== 'string' ||
+    archive.file.includes('/') ||
+    typeof archive?.member !== 'string' ||
+    archive.member.startsWith('/') ||
+    archive.member.includes('\\') ||
+    archive.member.split('/').includes('..') ||
+    !/^[0-9a-f]{64}$/.test(archive?.sha256 ?? '')
+  ) {
+    throw new Error(`node.archives.${nodeTarget} is invalid`);
+  }
+}
 const requirements = lock.pythonReleaseDependencies?.requirements;
 if (
   typeof requirements !== 'string' ||

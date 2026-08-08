@@ -8,8 +8,7 @@
 // types before prototypes for sketch-local helpers that use them.
 struct HaWsFlowState {
     uint32_t wsId;
-    bool dirtyLobby;
-    bool dirtyState;
+    HaWsDirtyTracker dirty;
     String lobby;
     String state;
     HaWsQueueTracker queue;

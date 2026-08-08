@@ -16,9 +16,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
+      - name: Bootstrap checksum-pinned Node
+        run: tools/bootstrap-node.sh
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -72,15 +71,16 @@ jobs:
           export ARDUINO_DIRECTORIES_USER="$PWD/.cache/arduino/user"
           ARDUINO_CLI="$(command -v arduino-cli)"
           export ARDUINO_CLI
+          CI_CANDIDATE_TAG="v$(tr -d '[:space:]' < VERSION)-rc.1"
           git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
-          "$REPRO_WORKTREE/tools/build-release-candidate.sh"
+          "$REPRO_WORKTREE/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
           node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/first.sha256"
           mkdir -p "$REPRO_FIRST"
           cp -R "$REPRO_WORKTREE/build" "$REPRO_FIRST/build"
           cp -R "$REPRO_WORKTREE/firmware" "$REPRO_FIRST/firmware"
           git worktree remove --force "$REPRO_WORKTREE"
           git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
-          "$REPRO_WORKTREE/tools/build-release-candidate.sh"
+          "$REPRO_WORKTREE/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
           node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/second.sha256"
           diff -u "$RUNNER_TEMP/first.sha256" "$RUNNER_TEMP/second.sha256"
 

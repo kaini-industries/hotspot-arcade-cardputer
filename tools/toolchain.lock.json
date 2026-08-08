@@ -6,7 +6,14 @@
       "darwin-arm64": {
         "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-darwin-arm64.tar.xz",
         "file": "node-v24.19.0-darwin-arm64.tar.xz",
+        "member": "node-v24.19.0-darwin-arm64",
         "sha256": "3f1cf157479c1480352083105e13faf9d008ede98e7e157746b6df940d197b94"
+      },
+      "linux-x64": {
+        "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz",
+        "file": "node-v24.19.0-linux-x64.tar.xz",
+        "member": "node-v24.19.0-linux-x64",
+        "sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647"
       }
     }
   },

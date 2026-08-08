@@ -11,7 +11,7 @@ import {
   CANONICAL_REPOSITORY_SLUG,
   validateRelease,
 } from '../tools/validate-release.mjs';
-import { readCleanGitSource } from '../tools/release-provenance.mjs';
+import { readCleanGitSource, verifyFinalTag } from '../tools/release-provenance.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -77,13 +77,34 @@ test('clean source provenance rejects tracked and untracked changes', () => {
   assert.throws(() => readCleanGitSource(repository), /source checkout is dirty/);
 });
 
+test('final release tags must exist and resolve to the packaged commit', () => {
+  const repository = mkdtempSync(join(tmpdir(), 'hotspot-final-tag-test-'));
+  const git = (...args) => execFileSync('git', ['-C', repository, ...args], { stdio: 'pipe' });
+  git('init', '--quiet');
+  git('config', 'user.name', 'Release Test');
+  git('config', 'user.email', 'release-test@example.invalid');
+  writeFileSync(join(repository, 'tracked.txt'), 'release\n');
+  git('add', 'tracked.txt');
+  git('commit', '--quiet', '-m', 'release');
+  const commit = readCleanGitSource(repository).commit;
+  assert.throws(() => verifyFinalTag(repository, 'v0.6.0', commit), /tag does not exist/);
+  git('tag', 'v0.6.0');
+  assert.equal(verifyFinalTag(repository, 'v0.6.0', commit), commit);
+  assert.throws(() => verifyFinalTag(repository, 'v0.6.0', '2'.repeat(40)), /does not resolve/);
+});
+
 test('release packaging emits stable checksums and manifest', () => {
   const build = mkdtempSync(join(tmpdir(), 'hotspot-release-test-'));
   writeFileSync(join(build, 'hotspot-arcade-cardputer.ino.bin'), 'app fixture');
   writeFileSync(join(build, 'hotspot-arcade-cardputer.full.bin'), 'full fixture');
   writeFileSync(join(build, 'hotspot-arcade-cardputer-m5burner.zip'), 'archive fixture');
 
-  const command = [join(root, 'tools', 'package-release.mjs'), '--artifacts-dir', build, '--tag', 'v0.6.0'];
+  const command = [
+    join(root, 'tools', 'package-release.mjs'),
+    '--artifacts-dir', build,
+    '--tag', 'v0.6.0-rc.1',
+    '--candidate',
+  ];
   const options = { cwd: root, stdio: 'pipe', env: { ...process.env, SOURCE_DATE_EPOCH: '1700000000' } };
   execFileSync(process.execPath, [join(root, 'tools', 'generate-sbom.mjs'), build], options);
   execFileSync(process.execPath, command, options);
@@ -98,7 +119,8 @@ test('release packaging emits stable checksums and manifest', () => {
   assert.equal(manifest.version, '0.6.0');
   assert.match(manifest.commit, /^[0-9a-f]{40}$/);
   assert.equal(manifest.sourceTreeClean, true);
-  assert.equal(manifest.candidate, false);
+  assert.equal(manifest.tag, 'v0.6.0-rc.1');
+  assert.equal(manifest.candidate, true);
   assert.equal(manifest.sourceDateEpoch, 1700000000);
   assert.equal(manifest.upstream.repository, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).repository);
   assert.equal(manifest.upstream.sourceTreeSha256, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).sourceTreeSha256);
@@ -120,7 +142,12 @@ test('release metadata failure preserves the previous atomic outputs', () => {
     ['hotspot-arcade-cardputer.full.bin', 'full fixture'],
     ['hotspot-arcade-cardputer-m5burner.zip', 'archive fixture'],
   ]) writeFileSync(join(build, name), content);
-  const command = [join(root, 'tools', 'package-release.mjs'), '--artifacts-dir', build, '--tag', 'v0.6.0'];
+  const command = [
+    join(root, 'tools', 'package-release.mjs'),
+    '--artifacts-dir', build,
+    '--tag', 'v0.6.0-rc.1',
+    '--candidate',
+  ];
   const options = { cwd: root, stdio: 'pipe', env: { ...process.env, SOURCE_DATE_EPOCH: '1700000000' } };
   execFileSync(process.execPath, [join(root, 'tools', 'generate-sbom.mjs'), build], options);
   execFileSync(process.execPath, command, options);
@@ -180,6 +207,8 @@ test('workflows gate publication on isolated reproducibility and verified attest
     assert.match(workflow, /diff -u "\$RUNNER_TEMP\/first\.sha256" "\$RUNNER_TEMP\/second\.sha256"/);
     assert.match(workflow, /tools\/test-native\.sh --tsan/);
     assert.match(workflow, /tools\/bootstrap-ci-tools\.sh/);
+    assert.match(workflow, /tools\/bootstrap-node\.sh/);
+    assert.doesNotMatch(workflow, /actions\/setup-node/);
     assert.doesNotMatch(workflow, /go install/);
   }
   assert.match(release, /\n  workflow_dispatch:\n/);
@@ -190,6 +219,11 @@ test('workflows gate publication on isolated reproducibility and verified attest
   assert.match(release, /verify-build-provenance:/);
   assert.match(release, /gh attestation verify/);
   assert.match(release, /--signer-workflow/);
+  assert.match(release, /--source-digest "\$RELEASE_COMMIT"/);
+  assert.match(release, /--source-ref "\$GITHUB_REF"/);
+  assert.match(release, /--deny-self-hosted-runners/);
+  assert.match(release, /--expected-commit "\$RELEASE_COMMIT"/);
+  assert.match(ci, /--tag "\$CI_CANDIDATE_TAG" --candidate/g);
   for (const job of ['draft-github-release', 'publish-m5burner', 'finalize-github-release']) {
     const start = release.indexOf(`  ${job}:`);
     assert.notEqual(start, -1);
@@ -208,6 +242,9 @@ test('CI host tools use reviewed release archives instead of runner globals', ()
   const bootstrap = readFileSync(join(root, 'tools', 'bootstrap-ci-tools.sh'), 'utf8');
   assert.match(bootstrap, /sha256sum --check --status/);
   assert.match(bootstrap, /curl --proto '=https' --tlsv1\.2/);
+  const nodeBootstrap = readFileSync(join(root, 'tools', 'bootstrap-node.sh'), 'utf8');
+  assert.match(nodeBootstrap, /node\.archives\.\$TARGET/);
+  assert.match(lock.node.archives['linux-x64'].sha256, /^[0-9a-f]{64}$/);
 });
 
 test('fresh detached candidates generate headers and share the locked Arduino data path', () => {
@@ -216,7 +253,9 @@ test('fresh detached candidates generate headers and share the locked Arduino da
   const build = candidate.indexOf('tools/build.sh');
   const finalCheck = candidate.indexOf('node tools/gen-assets.mjs --check');
   assert.ok(firstGeneration >= 0 && firstGeneration < build && build < finalCheck);
+  assert.match(candidate, /--tag is required/);
 
   const budgets = readFileSync(join(root, 'tools', 'check-build-budgets.mjs'), 'utf8');
   assert.match(budgets, /process\.env\.ARDUINO_DIRECTORIES_DATA/);
+  assert.match(readFileSync(join(root, 'tools', 'build.sh'), 'utf8'), /compile \\\n  --clean \\/);
 });

@@ -20,13 +20,13 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "usage: tools/build-release-candidate.sh [--tag vX.Y.Z] [--candidate]" >&2
+      echo "usage: tools/build-release-candidate.sh --tag vX.Y.Z [--candidate]" >&2
       exit 2
       ;;
   esac
 done
-if [[ "$CANDIDATE" == true && -z "$TAG" ]]; then
-  echo "--candidate requires --tag vX.Y.Z-rc.N" >&2
+if [[ -z "$TAG" ]]; then
+  echo "--tag is required; use --candidate for an unpublished vX.Y.Z-rc.N build" >&2
   exit 2
 fi
 [[ "${SOURCE_DATE_EPOCH:-}" =~ ^(0|[1-9][0-9]*)$ ]] || {
@@ -64,9 +64,7 @@ node tools/generate-sbom.mjs build
 node tools/validate-sbom.mjs build
 if [[ "$CANDIDATE" == true ]]; then
   node tools/package-release.mjs --tag "$TAG" --candidate
-elif [[ -n "$TAG" ]]; then
-  node tools/package-release.mjs --tag "$TAG"
 else
-  node tools/package-release.mjs
+  node tools/package-release.mjs --tag "$TAG"
 fi
 node tools/release-hashes.mjs >/dev/null

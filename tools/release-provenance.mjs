@@ -40,6 +40,25 @@ export function readCleanGitSource(repoRoot = REPOSITORY_ROOT) {
   return { commit, sourceTreeClean: true };
 }
 
+export function verifyFinalTag(repoRoot, tag, commit) {
+  if (!/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(tag ?? '')) {
+    throw new Error(`final release tag is invalid: ${tag || '(missing)'}`);
+  }
+  if (!/^[0-9a-f]{40}$/.test(commit ?? '')) throw new Error('final release commit is invalid');
+  let tagCommit;
+  try {
+    tagCommit = execFileSync(
+      'git',
+      ['-C', repoRoot, 'rev-parse', '--verify', `refs/tags/${tag}^{commit}`],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+  } catch {
+    throw new Error(`final release tag does not exist: ${tag}`);
+  }
+  if (tagCommit !== commit) throw new Error(`final release tag ${tag} does not resolve to source commit ${commit}`);
+  return tagCommit;
+}
+
 export function readToolchainLock(repoRoot = REPOSITORY_ROOT) {
   const lock = JSON.parse(readFileSync(join(repoRoot, 'tools', 'toolchain.lock.json'), 'utf8'));
   if (lock.schema !== 1 || !lock.arduino?.fqbn || !lock.arduino?.core?.version) {

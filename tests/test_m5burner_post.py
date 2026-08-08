@@ -15,6 +15,7 @@ FIRMWARE_ID = next(iter(publisher.FIRMWARE_MAP))
 FIRMWARE_NAME = publisher.FIRMWARE_MAP[FIRMWARE_ID]
 RELEASE_VERSION = "0.6.0"
 RELEASE_TAG = f"v{RELEASE_VERSION}"
+SOURCE_COMMIT = "1" * 40
 
 
 class FakeResponse:
@@ -82,7 +83,7 @@ def release_fixture(directory: Path):
         "version": RELEASE_VERSION,
         "tag": RELEASE_TAG,
         "repository": publisher.EXPECTED_REPOSITORY,
-        "commit": "1" * 40,
+        "commit": SOURCE_COMMIT,
         "sourceTreeClean": True,
         "candidate": False,
         "artifacts": [
@@ -174,6 +175,38 @@ class PublisherValidationTests(unittest.TestCase):
                         directory / "SHA256SUMS",
                         expected_version=RELEASE_VERSION,
                     )
+
+    def test_manifest_commit_is_bound_to_release_checkout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            release_fixture(directory)
+            with self.assertRaisesRegex(publisher.ValidationError, "release checkout"):
+                publisher.validate_artifacts(
+                    directory,
+                    directory / "SHA256SUMS",
+                    expected_version=RELEASE_VERSION,
+                    expected_commit="2" * 40,
+                )
+
+    def test_self_consistent_oversized_firmware_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            artifact, manifest_path = release_fixture(directory)
+            artifact.write_bytes(b"x" * (publisher.MAX_FIRMWARE_BYTES + 1))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["artifacts"][0]["bytes"] = artifact.stat().st_size
+            manifest["artifacts"][0]["sha256"] = hashlib.sha256(
+                artifact.read_bytes()
+            ).hexdigest()
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            write_checksums(directory)
+            with self.assertRaisesRegex(publisher.ValidationError, "exceeds"):
+                publisher.validate_artifacts(
+                    directory,
+                    directory / "SHA256SUMS",
+                    expected_version=RELEASE_VERSION,
+                    expected_commit=SOURCE_COMMIT,
+                )
 
     def test_manifest_size_hash_and_presence_are_artifact_bound(self):
         cases = (
@@ -458,7 +491,11 @@ class PublisherExitStatusTests(unittest.TestCase):
             directory = Path(temp)
             release_fixture(directory)
             result = publisher.main(
-                ["--tag", RELEASE_TAG, "--artifacts-dir", str(directory)],
+                [
+                    "--tag", RELEASE_TAG,
+                    "--expected-commit", SOURCE_COMMIT,
+                    "--artifacts-dir", str(directory),
+                ],
                 {"M5BURNER_USER": "user", "M5BURNER_PWD": "password"},
                 FailingClient,
             )
@@ -480,7 +517,11 @@ class PublisherExitStatusTests(unittest.TestCase):
             directory = Path(temp)
             release_fixture(directory)
             result = publisher.main(
-                ["--tag", RELEASE_TAG, "--artifacts-dir", str(directory)],
+                [
+                    "--tag", RELEASE_TAG,
+                    "--expected-commit", SOURCE_COMMIT,
+                    "--artifacts-dir", str(directory),
+                ],
                 {"M5BURNER_USER": "user", "M5BURNER_PWD": "password"},
                 SuccessfulClient,
             )
@@ -506,7 +547,11 @@ class PublisherExitStatusTests(unittest.TestCase):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 result = publisher.main(
-                    ["--tag", RELEASE_TAG, "--artifacts-dir", str(directory)],
+                    [
+                        "--tag", RELEASE_TAG,
+                        "--expected-commit", SOURCE_COMMIT,
+                        "--artifacts-dir", str(directory),
+                    ],
                     {"M5BURNER_USER": "user", "M5BURNER_PWD": secret},
                     ExplodingClient,
                 )
@@ -530,7 +575,11 @@ class PublisherExitStatusTests(unittest.TestCase):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 result = publisher.main(
-                    ["--tag", RELEASE_TAG, "--artifacts-dir", str(directory)],
+                    [
+                        "--tag", RELEASE_TAG,
+                        "--expected-commit", SOURCE_COMMIT,
+                        "--artifacts-dir", str(directory),
+                    ],
                     {"M5BURNER_USER": "user", "M5BURNER_PWD": secret},
                     ExplodingLoginClient,
                 )
@@ -538,12 +587,15 @@ class PublisherExitStatusTests(unittest.TestCase):
         self.assertNotIn(secret, stderr.getvalue())
 
     def test_missing_credentials_returns_validation_error(self):
-        result = publisher.main(["--tag", RELEASE_TAG], {})
+        result = publisher.main(
+            ["--tag", RELEASE_TAG, "--expected-commit", SOURCE_COMMIT],
+            {},
+        )
         self.assertEqual(result, publisher.ValidationError.exit_code)
 
     def test_tag_must_match_checked_in_version(self):
         result = publisher.main(
-            ["--tag", "v0.5.0"],
+            ["--tag", "v0.5.0", "--expected-commit", SOURCE_COMMIT],
             {"M5BURNER_USER": "user", "M5BURNER_PWD": "password"},
         )
         self.assertEqual(result, publisher.ValidationError.exit_code)

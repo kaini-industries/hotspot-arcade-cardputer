@@ -1,6 +1,8 @@
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "ha_ws_flow_policy.h"
 
@@ -127,16 +129,102 @@ static void testControlCountDrivesClose() {
 }
 
 static void testDirtyRetryDecisions() {
-    assert(haWsChooseDirtyRetry(true, true, 3) == HaWsDirtyLobby);
-    assert(haWsChooseDirtyRetry(false, true, 3) == HaWsDirtyState);
-    assert(haWsChooseDirtyRetry(true, false, 4) == HaWsDirtyNone);
-    assert(haWsChooseDirtyRetry(false, true, 4) == HaWsDirtyNone);
-    assert(haWsChooseDirtyRetry(false, false, 0) == HaWsDirtyNone);
+    HaWsDirtyTracker dirty = {true, true};
+    assert(haWsChooseDirtyRetry(dirty, 3) == HaWsDirtyLobby);
+    dirty = HaWsDirtyTracker{false, true};
+    assert(haWsChooseDirtyRetry(dirty, 3) == HaWsDirtyState);
+    dirty = HaWsDirtyTracker{true, false};
+    assert(haWsChooseDirtyRetry(dirty, 4) == HaWsDirtyNone);
+    dirty = HaWsDirtyTracker{false, true};
+    assert(haWsChooseDirtyRetry(dirty, 4) == HaWsDirtyNone);
+    dirty = HaWsDirtyTracker{};
+    assert(haWsChooseDirtyRetry(dirty, 0) == HaWsDirtyNone);
 
     // Once the lobby retry is accepted, the state can follow only while the
     // actual queue remains below the coalescing threshold.
-    assert(haWsChooseDirtyRetry(false, true, 3) == HaWsDirtyState);
-    assert(haWsChooseDirtyRetry(false, true, 4) == HaWsDirtyNone);
+    dirty = HaWsDirtyTracker{false, true};
+    assert(haWsChooseDirtyRetry(dirty, 3) == HaWsDirtyState);
+    assert(haWsChooseDirtyRetry(dirty, 4) == HaWsDirtyNone);
+}
+
+struct DirtyLifecycleModel {
+    HaWsDirtyTracker dirty = {};
+    std::string lobby;
+    std::string state;
+    std::vector<std::string> delivered;
+
+    void cache(HaWsOutputClass outputClass, const std::string& payload) {
+        HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+        if(choice == HaWsDirtyLobby) lobby = payload;
+        else if(choice == HaWsDirtyState) state = payload;
+        else assert(false);
+        haWsDirtyMark(dirty, outputClass);
+    }
+
+    void retire(HaWsOutputClass outputClass) {
+        HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+        haWsDirtyRetireSuperseded(dirty, outputClass);
+        if(choice == HaWsDirtyLobby) lobby.clear();
+        else if(choice == HaWsDirtyState) state.clear();
+    }
+
+    void directSendSucceeded(
+        HaWsOutputClass outputClass,
+        const std::string& payload) {
+        delivered.push_back(payload);
+        retire(outputClass);
+    }
+
+    bool retry(bool enqueueSucceeds, size_t queueDepth) {
+        HaWsDirtyChoice choice = haWsChooseDirtyRetry(dirty, queueDepth);
+        if(choice == HaWsDirtyNone) return false;
+        HaWsOutputClass outputClass = haWsDirtyOutputClass(choice);
+        if(!enqueueSucceeds) {
+            // Matches firmware behavior: replaceable retry failures retain the
+            // newest cached payload for another tick.
+            assert(haWsChooseSendFailureAction(outputClass) ==
+                   HaWsFailureCacheSnapshot);
+            return false;
+        }
+        delivered.push_back(choice == HaWsDirtyLobby ? lobby : state);
+        retire(outputClass);
+        return true;
+    }
+};
+
+static void testDirtyStateLifecycleNeverRegresses() {
+    DirtyLifecycleModel model;
+
+    // S1 is cached under pressure. Once newer S2 is directly enqueued, S1 must
+    // be retired so a later flush cannot send it after S2.
+    model.cache(HaWsOutputGameState, "S1");
+    assert(model.dirty.state && model.state == "S1");
+    model.directSendSucceeded(HaWsOutputGameState, "S2");
+    assert(!model.dirty.state && model.state.empty());
+    assert(!model.retry(true, 0));
+    assert((model.delivered == std::vector<std::string>{"S2"}));
+
+    // Repeated coalescing keeps only the newest state, and a failed retry does
+    // not discard it. A later successful retry delivers S4 exactly once.
+    model.cache(HaWsOutputGameState, "S3");
+    model.cache(HaWsOutputGameStateStream, "S4");
+    assert(model.state == "S4");
+    assert(!model.retry(false, 0));
+    assert(model.dirty.state && model.state == "S4");
+    assert(model.retry(true, 0));
+    assert(!model.dirty.state && model.state.empty());
+    assert((model.delivered == std::vector<std::string>{"S2", "S4"}));
+
+    // Lobby and game state are independent slots: direct lobby delivery cannot
+    // erase a newer pending game snapshot.
+    model.cache(HaWsOutputLobbyState, "L1");
+    model.cache(HaWsOutputGameState, "S5");
+    model.directSendSucceeded(HaWsOutputLobbyState, "L2");
+    assert(!model.dirty.lobby && model.lobby.empty());
+    assert(model.dirty.state && model.state == "S5");
+    assert(model.retry(true, 0));
+    assert((model.delivered ==
+            std::vector<std::string>{"S2", "S4", "L2", "S5"}));
 }
 
 int main() {
@@ -146,6 +234,6 @@ int main() {
     testQueueTracking();
     testControlCountDrivesClose();
     testDirtyRetryDecisions();
+    testDirtyStateLifecycleNeverRegresses();
     std::cout << "native outbound-flow-policy tests passed\n";
 }
-

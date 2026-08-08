@@ -13,6 +13,7 @@ import {
   readToolchainLock,
   readUpstreamLock,
   sourceDateEpoch,
+  verifyFinalTag,
 } from './release-provenance.mjs';
 import { CANONICAL_REPOSITORY, RELEASE_ARTIFACTS, validateRelease } from './validate-release.mjs';
 import { validateSbomDocument } from './validate-sbom.mjs';
@@ -35,6 +36,7 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   if (!options.artifactsDir) throw new Error('--artifacts-dir cannot be empty');
+  if (!options.tag) throw new Error('--tag is required');
   return options;
 }
 
@@ -48,6 +50,7 @@ function main() {
       candidate: options.candidate,
     });
     const source = readCleanGitSource(root);
+    if (!release.candidate) verifyFinalTag(root, release.tag, source.commit);
     const artifactsDir = resolve(root, options.artifactsDir);
     const upstream = readUpstreamLock(root);
     const toolchain = readToolchainLock(root);

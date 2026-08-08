@@ -140,6 +140,8 @@ source-tree digest. The downstream build lock records every tool, Arduino depend
 archive, and `boot_app0.bin` hash.
 
 A release candidate is accepted only after native sanitizer tests, simulator tests,
-a clean generated-file check, the firmware budgets, two isolated identical builds,
+a clean generated-file check, the firmware budgets, two clean-cache isolated identical builds,
 esptool reconstruction, deterministic M5 packaging, SPDX validation, checksums, and
-provenance verification.
+provenance verification. Final metadata additionally requires the release tag to
+resolve to the clean packaged commit; M5Burner receives that exact commit as an
+independent publication constraint.

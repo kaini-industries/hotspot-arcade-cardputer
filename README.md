@@ -162,6 +162,9 @@ tools/doctor.sh
 tools/build.sh
 ```
 
+`tools/bootstrap-node.sh` is the checksum-verifying alternative to `nvm` and is
+what CI uses for the locked Linux x64 Node archive.
+
 `.nvmrc` and `tools/toolchain.lock.json` pin Node 24.19.0, Arduino CLI 1.5.1,
 ESP32 core 3.3.11, esptool 5.3.1, Emscripten 6.0.2, actionlint 1.7.12,
 Syft 1.50.0, Cosign 3.0.6, the CI GitHub CLI 2.93.0, M5Cardputer 1.1.1,
@@ -186,6 +189,9 @@ The native suite uses ASan/UBSan by default and TSan for the bounded asynchronou
 queue on Linux. `tools/build-release-candidate.sh` performs the locked image,
 package, SBOM, manifest, checksum, and provenance gates with
 `SOURCE_DATE_EPOCH` set.
+It requires an explicit tag, rejects a dirty checkout, marks `-rc.N` builds as
+unpublishable candidates, and requires a final tag to resolve to the packaged
+commit.
 
 ## Architecture
 

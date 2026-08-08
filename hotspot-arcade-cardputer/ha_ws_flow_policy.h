@@ -42,6 +42,11 @@ enum HaWsDirtyChoice : uint8_t {
     HaWsDirtyState = 2,
 };
 
+struct HaWsDirtyTracker {
+    bool lobby;
+    bool state;
+};
+
 static inline bool haWsOutputIsControl(HaWsOutputClass outputClass) {
     return outputClass == HaWsOutputControl;
 }
@@ -101,14 +106,57 @@ static inline HaWsSendFailureAction haWsChooseSendFailureAction(
     return HaWsFailureDropMessage;
 }
 
+static inline HaWsDirtyChoice haWsDirtyChoiceForOutput(
+    HaWsOutputClass outputClass) {
+    if(outputClass == HaWsOutputLobbyState) return HaWsDirtyLobby;
+    if(outputClass == HaWsOutputGameState ||
+       outputClass == HaWsOutputGameStateStream)
+        return HaWsDirtyState;
+    return HaWsDirtyNone;
+}
+
+static inline bool haWsDirtyAny(const HaWsDirtyTracker& dirty) {
+    return dirty.lobby || dirty.state;
+}
+
+static inline bool haWsDirtyHas(
+    const HaWsDirtyTracker& dirty,
+    HaWsDirtyChoice choice) {
+    if(choice == HaWsDirtyLobby) return dirty.lobby;
+    if(choice == HaWsDirtyState) return dirty.state;
+    return false;
+}
+
+static inline void haWsDirtyMark(
+    HaWsDirtyTracker& dirty,
+    HaWsOutputClass outputClass) {
+    HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+    if(choice == HaWsDirtyLobby) dirty.lobby = true;
+    else if(choice == HaWsDirtyState) dirty.state = true;
+}
+
+// Any directly enqueued replaceable snapshot is newer than a snapshot cached
+// earlier in the serialized engine call stream. Retiring that same-class cache
+// prevents a later dirty flush from regressing the client to stale state.
+static inline void haWsDirtyRetireSuperseded(
+    HaWsDirtyTracker& dirty,
+    HaWsOutputClass outputClass) {
+    HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+    if(choice == HaWsDirtyLobby) dirty.lobby = false;
+    else if(choice == HaWsDirtyState) dirty.state = false;
+}
+
 static inline HaWsDirtyChoice haWsChooseDirtyRetry(
-    bool dirtyLobby,
-    bool dirtyState,
+    const HaWsDirtyTracker& dirty,
     size_t totalQueueDepth) {
     if(totalQueueDepth >= HA_WS_COALESCE_DEPTH) return HaWsDirtyNone;
-    if(dirtyLobby) return HaWsDirtyLobby;
-    if(dirtyState) return HaWsDirtyState;
+    if(dirty.lobby) return HaWsDirtyLobby;
+    if(dirty.state) return HaWsDirtyState;
     return HaWsDirtyNone;
+}
+
+static inline HaWsOutputClass haWsDirtyOutputClass(HaWsDirtyChoice choice) {
+    return choice == HaWsDirtyLobby ? HaWsOutputLobbyState : HaWsOutputGameState;
 }
 
 enum HaWsTrackedKind : uint8_t {
@@ -164,4 +212,3 @@ static inline bool haWsQueueRecord(
         tracker,
         haWsOutputIsControl(outputClass) ? HaWsTrackedControl : HaWsTrackedOther);
 }
-

@@ -64,6 +64,44 @@ static void testExactRolloverSafeWindow() {
     assert(haApReconnectEvaluate(
                required, paused, (uint32_t)(start + 600000UL), start, 600000UL) ==
            HaApReconnectDecisionWindowExpired);
+
+    // Readiness cannot win after the boundary. This models a hello accepted by
+    // AsyncTCP just before the loop task gets its next chance to evaluate state.
+    paused.session[1].connected = true;
+    assert(haApReconnectEvaluate(
+               required, paused, (uint32_t)(start + 600000UL), start, 600000UL) ==
+           HaApReconnectDecisionWindowExpired);
+    assert(haApReconnectEvaluate(
+               required, paused, (uint32_t)(start + 700000UL), start, 600000UL) ==
+           HaApReconnectDecisionWindowExpired);
+}
+
+static void testDeadlineIsAppliedBeforeLateInput() {
+    const uint32_t start = 0xfffffff0UL;
+    assert(!haApReconnectExpiresBeforeInput(
+        HaApReconnectWait,
+        (uint32_t)(start + 599999UL),
+        start,
+        600000UL));
+    assert(haApReconnectExpiresBeforeInput(
+        HaApReconnectWait,
+        (uint32_t)(start + 600000UL),
+        start,
+        600000UL));
+    assert(!haApReconnectExpiresBeforeInput(
+        HaApRunning,
+        (uint32_t)(start + 600000UL),
+        start,
+        600000UL));
+}
+
+static void testCrossFeatureApStatePolicy() {
+    assert(haApSsidRenameAllowed(HaApRunning));
+    assert(haApSsidRenameAllowed(HaApManualOff));
+    assert(!haApSsidRenameAllowed(HaApReconnectWait));
+
+    assert(haApStateAfterHistoryRestore(true) == HaApRunning);
+    assert(haApStateAfterHistoryRestore(false) == HaApManualOff);
 }
 
 static void testLegacyParticipantNeverAutoResumes() {
@@ -91,6 +129,8 @@ static void testAlreadyOfflineSeatIsNotRequired() {
 int main() {
     testExactIdentityBarrier();
     testExactRolloverSafeWindow();
+    testDeadlineIsAppliedBeforeLateInput();
+    testCrossFeatureApStatePolicy();
     testLegacyParticipantNeverAutoResumes();
     testAlreadyOfflineSeatIsNotRequired();
     std::cout << "native AP reconnect tests passed\n";

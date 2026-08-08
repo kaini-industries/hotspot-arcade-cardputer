@@ -14,6 +14,13 @@ struct HaApRequiredRoster {
     uint8_t unidentified;
 };
 
+enum HaApState : uint8_t {
+    HaApBooting = 0,
+    HaApRunning = 1,
+    HaApManualOff = 2,
+    HaApReconnectWait = 3,
+};
+
 enum HaApReconnectDecision : uint8_t {
     HaApReconnectDecisionWait = 0,
     HaApReconnectDecisionAllRequiredOnline = 1,
@@ -88,15 +95,49 @@ static inline uint8_t haApRequiredMissing(
     return missing > UINT8_MAX ? UINT8_MAX : (uint8_t)missing;
 }
 
+static inline bool haApReconnectWindowExpired(
+    uint32_t now,
+    uint32_t startedAt,
+    uint32_t windowMs) {
+    return (uint32_t)(now - startedAt) >= windowMs;
+}
+
+// Data callbacks run independently of the loop task. A hello received on or
+// after the boundary must expire suspended seats before Engine considers that
+// identity; otherwise a late hello can make the roster look ready before the
+// loop observes the deadline.
+static inline bool haApReconnectExpiresBeforeInput(
+    HaApState state,
+    uint32_t now,
+    uint32_t startedAt,
+    uint32_t windowMs) {
+    return state == HaApReconnectWait &&
+           haApReconnectWindowExpired(now, startedAt, windowMs);
+}
+
+static inline bool haApSsidRenameAllowed(HaApState state) {
+    return state != HaApReconnectWait;
+}
+
+// A history restore starts a fresh game lobby, so the prior suspended roster no
+// longer owns a reconnect barrier. Keep transport state aligned with whether an
+// AP is currently available to that new lobby.
+static inline HaApState haApStateAfterHistoryRestore(bool portalRunning) {
+    return portalRunning ? HaApRunning : HaApManualOff;
+}
+
 static inline HaApReconnectDecision haApReconnectEvaluate(
     const HaApRequiredRoster& required,
     const HaHost& host,
     uint32_t now,
     uint32_t startedAt,
     uint32_t windowMs) {
+    // Deadline wins at the exact boundary. A callback that arrived before the
+    // boundary has already marked its identity online and will survive Engine's
+    // detached-seat finalization; a callback at/after it is expired first.
+    if(haApReconnectWindowExpired(now, startedAt, windowMs))
+        return HaApReconnectDecisionWindowExpired;
     if(haApRequiredMissing(required, host) == 0)
         return HaApReconnectDecisionAllRequiredOnline;
-    if((uint32_t)(now - startedAt) >= windowMs)
-        return HaApReconnectDecisionWindowExpired;
     return HaApReconnectDecisionWait;
 }

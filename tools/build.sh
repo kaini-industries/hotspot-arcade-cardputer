@@ -42,6 +42,7 @@ cleanup() {
 trap cleanup EXIT
 
 "$ARDUINO_CLI" --config-file tools/arduino-cli.yaml compile \
+  --clean \
   --fqbn "$FQBN" \
   --libraries vendor/libs \
   --build-path "$BUILD_TMP/work" \

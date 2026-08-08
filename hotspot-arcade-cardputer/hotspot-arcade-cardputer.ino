@@ -108,15 +108,10 @@ static char apName[33] = "\xF0\x9F\x8E\xAE Hotspot Arcade";
 static char joinCode[7] = ""; // generated once per boot; never persisted or sent to phones
 static bool portalRunning = false;
 
-enum HaApState : uint8_t {
-    HaApBooting = 0,
-    HaApRunning = 1,
-    HaApManualOff = 2,
-    HaApReconnectWait = 3,
-};
 static HaApState haApState = HaApBooting;
 static HaApRequiredRoster haApRequiredRoster = {};
 static uint32_t haApReconnectStartedMs = 0;
+static bool haApReconnectExpiryApplied = false;
 #define HA_AP_RECONNECT_WINDOW_MS 600000UL
 
 static Engine engine;
@@ -247,14 +242,24 @@ static void haWsCacheState(
     HaWsFlowState& flow,
     HaWsOutputClass outputClass,
     const String& msg) {
-    if(outputClass == HaWsOutputLobbyState) {
+    HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+    if(choice == HaWsDirtyLobby) {
         flow.lobby = msg;
-        flow.dirtyLobby = true;
-    } else {
+    } else if(choice == HaWsDirtyState) {
         flow.state = msg;
-        flow.dirtyState = true;
-    }
+    } else return;
+    haWsDirtyMark(flow.dirty, outputClass);
     if(haDiagnostics.outputCoalesced != UINT32_MAX) haDiagnostics.outputCoalesced++;
+}
+
+static void haWsRetireSupersededCache(
+    HaWsFlowState& flow,
+    HaWsOutputClass outputClass) {
+    HaWsDirtyChoice choice = haWsDirtyChoiceForOutput(outputClass);
+    if(!haWsDirtyHas(flow.dirty, choice)) return;
+    haWsDirtyRetireSuperseded(flow.dirty, outputClass);
+    if(choice == HaWsDirtyLobby) flow.lobby = "";
+    else if(choice == HaWsDirtyState) flow.state = "";
 }
 
 static void haWsCloseForOutboundFailure(
@@ -319,6 +324,8 @@ void haWsSendWs(uint32_t wsId, const String& msg) {
         // two ever disagree instead of losing control-count integrity.
         if(!haWsQueueRecord(flow->queue, outputClass))
             haWsCloseForOutboundFailure(*client, "outbound tracking failure");
+        else
+            haWsRetireSupersededCache(*flow, outputClass);
         return;
     }
 
@@ -346,26 +353,37 @@ void haWsBroadcast(const String& msg) {
 static void haWsFlushDirty() {
     for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++) {
         HaWsFlowState& flow = haWsFlow[i];
-        if(!flow.wsId || (!flow.dirtyLobby && !flow.dirtyState)) continue;
+        if(!flow.wsId || !haWsDirtyAny(flow.dirty)) continue;
         AsyncWebSocketClient* client = ws.client(flow.wsId);
         if(!client) continue;
         for(uint8_t attempt = 0; attempt < 2; attempt++) {
             size_t queueDepth = client->queueLen();
             haWsQueueObserve(flow.queue, queueDepth);
-            HaWsDirtyChoice choice = haWsChooseDirtyRetry(
-                flow.dirtyLobby, flow.dirtyState, queueDepth);
+            HaWsDirtyChoice choice = haWsChooseDirtyRetry(flow.dirty, queueDepth);
             if(choice == HaWsDirtyNone) break;
             String& pending = choice == HaWsDirtyLobby ? flow.lobby : flow.state;
-            HaWsOutputClass outputClass = choice == HaWsDirtyLobby ?
-                HaWsOutputLobbyState : HaWsOutputGameState;
-            if(!client->text(pending)) break; // retain dirty snapshot for next tick
+            HaWsOutputClass outputClass = haWsDirtyOutputClass(choice);
+            if(!client->text(pending)) {
+                // A retry is still governed by its message class. Replaceable
+                // snapshots remain cached; a future nonreplaceable dirty class
+                // would close for resume recovery rather than disappear.
+                HaWsSendFailureAction failure =
+                    haWsChooseSendFailureAction(outputClass);
+                if(failure == HaWsFailureCloseClient)
+                    haWsCloseForOutboundFailure(
+                        *client, "outbound dirty control send failed");
+                else if(failure == HaWsFailureDropMessage) {
+                    if(haDiagnostics.streamDropped != UINT32_MAX)
+                        haDiagnostics.streamDropped++;
+                    haWsRetireSupersededCache(flow, outputClass);
+                }
+                break;
+            }
             if(!haWsQueueRecord(flow.queue, outputClass)) {
                 haWsCloseForOutboundFailure(*client, "outbound tracking failure");
                 break;
             }
-            if(choice == HaWsDirtyLobby) flow.dirtyLobby = false;
-            else flow.dirtyState = false;
-            pending = "";
+            haWsRetireSupersededCache(flow, outputClass);
         }
     }
 }
@@ -637,6 +655,18 @@ static void onWsEvent(
             buf[len] = '\0';
             uint32_t rawNow = millis();
             ENGINE_LOCK();
+            // Enforce the planned reconnect deadline on the AsyncTCP task before
+            // Engine can accept a late hello and turn a detached seat online. The
+            // loop task completes the AP-state transition on its next tick.
+            if(haApReconnectExpiresBeforeInput(
+                   haApState,
+                   rawNow,
+                   haApReconnectStartedMs,
+                   HA_AP_RECONNECT_WINDOW_MS) &&
+               !haApReconnectExpiryApplied) {
+                engine.transportResume(rawNow, true);
+                haApReconnectExpiryApplied = true;
+            }
             HaSocketSlot* slot = haSocketFind(haSockets, client->id());
             char inputType[16];
             bool haveType = ha_json_str(buf, "t", inputType, sizeof(inputType));
@@ -762,10 +792,17 @@ static void haPortalResume(bool expireDetachedNow = false) {
     // host chose not to wait for.
     engine.transportResume(now, expireDetachedNow);
     haHostLog("session resumed");
-    ENGINE_UNLOCK();
     haApState = HaApRunning;
     haApRequiredClear(haApRequiredRoster);
     haApReconnectStartedMs = 0;
+    haApReconnectExpiryApplied = false;
+    ENGINE_UNLOCK();
+}
+
+static void haPortalSetState(HaApState state) {
+    ENGINE_LOCK();
+    haApState = state;
+    ENGINE_UNLOCK();
 }
 
 // Freeze engine time and durably checkpoint before touching AP/DNS/server state.
@@ -800,23 +837,27 @@ static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) 
 
 static bool haPortalStartReconnect() {
     if(!startPortalTransport()) return false;
+    bool noRequiredPlayers = false;
+    ENGINE_LOCK();
     haApState = HaApReconnectWait;
     haApReconnectStartedMs = millis();
-    if(!haApRequiredRoster.count && !haApRequiredRoster.unidentified)
-        haPortalResume();
+    haApReconnectExpiryApplied = false;
+    noRequiredPlayers = !haApRequiredRoster.count && !haApRequiredRoster.unidentified;
+    ENGINE_UNLOCK();
+    if(noRequiredPlayers) haPortalResume();
     return true;
 }
 
 static void haPortalTick(uint32_t now) {
-    if(haApState != HaApReconnectWait || !portalRunning) return;
     HaApReconnectDecision decision = HaApReconnectDecisionWait;
     ENGINE_LOCK();
-    decision = haApReconnectEvaluate(
-        haApRequiredRoster,
-        haHost,
-        now,
-        haApReconnectStartedMs,
-        HA_AP_RECONNECT_WINDOW_MS);
+    if(haApState == HaApReconnectWait && portalRunning)
+        decision = haApReconnectEvaluate(
+            haApRequiredRoster,
+            haHost,
+            now,
+            haApReconnectStartedMs,
+            HA_AP_RECONNECT_WINDOW_MS);
     ENGINE_UNLOCK();
     if(decision == HaApReconnectDecisionAllRequiredOnline)
         haPortalResume();
@@ -881,6 +922,15 @@ void haHostApplySsid(const char* ssid) {
     if(!ssid || !ssid[0] || strnlen(ssid, sizeof(apName)) >= sizeof(apName) ||
        strcmp(ssid, apName) == 0)
         return;
+    bool renameAllowed = false;
+    ENGINE_LOCK();
+    renameAllowed = haApSsidRenameAllowed(haApState);
+    if(!renameAllowed) haHostSetEvent("resume AP before SSID rename");
+    ENGINE_UNLOCK();
+    if(!renameAllowed) {
+        Serial.println("[ha] refusing SSID rename during reconnect wait");
+        return;
+    }
     bool wasUp = portalRunning;
     if(wasUp && !haPortalPauseAndStop("ssid_change", ssid)) return;
 
@@ -896,20 +946,20 @@ void haHostApplySsid(const char* ssid) {
         Serial.println("[ha] new SSID was not persisted; retaining prior SSID");
         break;
     case HaSsidCandidateRejectedPriorOffline:
-        haApState = HaApManualOff;
+        haPortalSetState(HaApManualOff);
         Serial.println("[ha] new SSID rejected and prior SSID restart failed; AP remains paused");
         break;
     case HaSsidFallbackRunning:
         Serial.println("[ha] new SSID failed; prior SSID restored");
         break;
     case HaSsidFallbackOffline:
-        haApState = HaApManualOff;
+        haPortalSetState(HaApManualOff);
         Serial.println("[ha] prior SSID fallback also failed; AP remains paused");
         break;
     case HaSsidRollbackRejectedCandidateOffline:
         // The candidate remains both the runtime value and the last successful
         // config generation. Never run the old AP while reboot selects the new.
-        haApState = HaApManualOff;
+        haPortalSetState(HaApManualOff);
         Serial.println("[ha] SSID rollback was not persisted; AP remains paused");
         break;
     default:
@@ -918,16 +968,20 @@ void haHostApplySsid(const char* ssid) {
 }
 
 void haHostTogglePortal() {
-    if(haApState == HaApReconnectWait && portalRunning) {
+    HaApState state = HaApBooting;
+    ENGINE_LOCK();
+    state = haApState;
+    ENGINE_UNLOCK();
+    if(state == HaApReconnectWait && portalRunning) {
         haPortalResume(); // host explicitly resumes early with missing players
         return;
     }
     if(portalRunning) {
-        if(haPortalPauseAndStop("ap_off", apName)) haApState = HaApManualOff;
+        if(haPortalPauseAndStop("ap_off", apName)) haPortalSetState(HaApManualOff);
         return;
     }
     if(!haPortalStartReconnect()) {
-        haApState = HaApManualOff;
+        haPortalSetState(HaApManualOff);
         Serial.println("[ha] AP start request failed; session remains paused");
     }
 }
@@ -1547,6 +1601,12 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     haHost.portalRunning = portalRunning;
     if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
     if(!portalRunning) engine.transportPause(millis());
+    // The restored game is a fresh lobby with no suspended engine seats. Any
+    // barrier captured for the discarded session is now obsolete.
+    haApRequiredClear(haApRequiredRoster);
+    haApReconnectStartedMs = 0;
+    haApReconnectExpiryApplied = false;
+    haApState = haApStateAfterHistoryRestore(portalRunning);
     haHostLog("history restored");
     haPersistence.dirty = false;
     ENGINE_UNLOCK();
