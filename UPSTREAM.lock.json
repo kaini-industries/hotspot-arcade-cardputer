@@ -1,0 +1,774 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/kaini-industries/hotspot-arcade",
+  "commit": "25ad21523c9a66eb712911545792ee8ebf6281ad",
+  "describe": "v1.6.0-3-g25ad215",
+  "sourceTreeSha256": "f26daf924bf8229e6da3b51128124e471d1a33925c0f09c2f95baa4b56bbd92c",
+  "files": [
+    {
+      "path": "vendor/engine/ha_games.h",
+      "sha256": "fe087cee68d175c513ac931e4f6951c25f40b9a71177e16991ac50814c613487",
+      "size": 177152
+    },
+    {
+      "path": "vendor/engine/ha_json.h",
+      "sha256": "68aafd536447d92228b67ed59032f5d67d86fec63ad98c47f96e5eab541b707c",
+      "size": 2600
+    },
+    {
+      "path": "vendor/engine/ha_proto.h",
+      "sha256": "96784cd618c342bbb22316884c9d6e4a8c5bf5c1be06323211f9652f272e759d",
+      "size": 2904
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.clang-format",
+      "sha256": "5d605c129038f8e397176f566579486b7c4d52586876fbf53e97ec6f71a989c8",
+      "size": 545
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.github/dependabot.yml",
+      "sha256": "3b6977d4913fffeacd9bea4fec7727da48d0aeb9a1d72aeadc88332f58b243fa",
+      "size": 216
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.github/ISSUE_TEMPLATE/bug_report.md",
+      "sha256": "44d324323e7c5674658994b8d547087755c6ea7bd4f42bdfebeaea03d18000a0",
+      "size": 956
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.github/ISSUE_TEMPLATE/question.md",
+      "sha256": "502621ddbdcdf4b5fc687e3b98d1154767ca0a834f09a50c1708881f18a9aaed",
+      "size": 100
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.github/stale.yml",
+      "sha256": "5aa189aa2bcec0cd7d6f4e389d903e61a54a848d91ddf600f535064898baae55",
+      "size": 822
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.github/workflows/ci.yml",
+      "sha256": "3939a37c49e4f1b28a107c1269b91367a80b3e0b63a671963f180b0c18710a9d",
+      "size": 2816
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.gitignore",
+      "sha256": "97ea25361d9323827376f95352fd8497e027ec2cd551dc2d4cd83776b038996c",
+      "size": 36
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.gitpod.Dockerfile",
+      "sha256": "0eccce6004b83f5d9708f1d9c3d879e34723dd82fd3e885498a39e7f96a5a2d9",
+      "size": 46
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/.gitpod.yml",
+      "sha256": "a0520651cca9d77bc88c7d313af62790de2bee0736be407af927eb8586a8657b",
+      "size": 184
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/arduino-cli-dev.yaml",
+      "sha256": "30a2a7a0e055654519a957627c13a18d0a936fc89b91abdae4525c016a922405",
+      "size": 468
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/arduino-cli.yaml",
+      "sha256": "da6edac13e3aedfac4312089d94a6caf942155f963f16247d85f9a8c407439db",
+      "size": 464
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/CMakeLists.txt",
+      "sha256": "e1a905ba10b6b8fa49cec9db7891d3eda2fadaa8d39a1d363ff3e363b3a823c0",
+      "size": 208
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/CODE_OF_CONDUCT.md",
+      "sha256": "6ee8d149c5add6ebd55f01353725a7d8adba36a1ec489848011f3bd8bd2a7736",
+      "size": 5236
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/component.mk",
+      "sha256": "dbd511ea103272644c47eea6c963e537ea02eab3d504bfcfeced1cade4cc67e5",
+      "size": 80
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/examples/Client/Client.ino",
+      "sha256": "0c413957547467bb9f711a574b7d0210e33c83a4a9863c47e62c2d2449a0337f",
+      "size": 2128
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/Kconfig.projbuild",
+      "sha256": "45e3560ed6682beb3cf197f68199d2681837181c98cd197c10e558df2b40b177",
+      "size": 738
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/library.json",
+      "sha256": "139d35778552c5ff903dbe0cdebcee3c82851454e7d4dce15f8c730cd511bd82",
+      "size": 565
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/library.properties",
+      "sha256": "8e96d6e3ba80053b5f0b5ecd33fc889065a99bb7a1e6d84507f8ca432581130c",
+      "size": 259
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/LICENSE",
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "size": 7651
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/platformio.ini",
+      "sha256": "70321c96c9fef0f5419faa8056c25ec50c1d4f0b4f99f8a05e8a45b99ca87196",
+      "size": 1258
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/README.ESP32Async.md",
+      "sha256": "79b31ce2b9bfc99da568e46d2d695e9da84692f343401a5cf425b3bc1d228a71",
+      "size": 2454
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/README.md",
+      "sha256": "2feb13d90b82829f263a7c25c97a74fb769bbe9dea8a3352a6a0264331a41b90",
+      "size": 718
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/src/AsyncTCP.cpp",
+      "sha256": "86fc7f62a917e33ac19ec4ea4788db3b9542939fbb1e565ae700beadfbed2339",
+      "size": 42725
+    },
+    {
+      "path": "vendor/libs/AsyncTCP/src/AsyncTCP.h",
+      "sha256": "6b632423e17b0f82be8530d77cc4a048cf84cc4270f353e38ff2d1f0865df9da",
+      "size": 10643
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.clang-format",
+      "sha256": "5d605c129038f8e397176f566579486b7c4d52586876fbf53e97ec6f71a989c8",
+      "size": 545
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.github/dependabot.yml",
+      "sha256": "3b6977d4913fffeacd9bea4fec7727da48d0aeb9a1d72aeadc88332f58b243fa",
+      "size": 216
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.github/ISSUE_TEMPLATE/bug_report.md",
+      "sha256": "4c47ff10b065655a3728dc2eb2a605bf5de77f274bbacb1fbd73544c37628e62",
+      "size": 1385
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.github/ISSUE_TEMPLATE/question.md",
+      "sha256": "94f70545883fc405b9aadd8b7b9a991237a0d9ed726e7325f00f67ab079a8764",
+      "size": 249
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.github/workflows/ci.yml",
+      "sha256": "7363644162827c7dad09dcac467a3277e0280eb63845f20e79b8c31e2b65e82d",
+      "size": 5532
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.github/workflows/stale.yaml",
+      "sha256": "d6d1eccca309530ac0fd8f03a6a2ff87e4b4c24ee7b5165fdb69529ca949c8e8",
+      "size": 972
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.gitignore",
+      "sha256": "9c263139f4f309abfab5f32ece7e62da8621a9bb5d4ea4417ff675dfe50c2c57",
+      "size": 35
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.gitpod.Dockerfile",
+      "sha256": "0eccce6004b83f5d9708f1d9c3d879e34723dd82fd3e885498a39e7f96a5a2d9",
+      "size": 46
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/.gitpod.yml",
+      "sha256": "a0520651cca9d77bc88c7d313af62790de2bee0736be407af927eb8586a8657b",
+      "size": 184
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/CMakeLists.txt",
+      "sha256": "d642abc2ef63aacde1d6b276bd16d512cfb7b53143869b668dbf287de8662611",
+      "size": 286
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/CODE_OF_CONDUCT.md",
+      "sha256": "6ee8d149c5add6ebd55f01353725a7d8adba36a1ec489848011f3bd8bd2a7736",
+      "size": 5236
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/docs/logo.png",
+      "sha256": "2a46bfd560069cffc164d8789941d6056ea071f57f69ec7ebfdfd0923dd66b85",
+      "size": 490217
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/docs/logo.webp",
+      "sha256": "bf3c86f312b11bf2d3a5bbf5771446f2a979922b2b6732808d07387593528ffb",
+      "size": 133742
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/docs/perf-c10-asynctcpsock.png",
+      "sha256": "6db1d0c710ac0b100c7424ad011e4e8ad71e9390066de57a2de1d5009ba854f3",
+      "size": 317493
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/docs/perf-c10.png",
+      "sha256": "ac9520a72b7719a1927ff9e1fe56fad25d596e6872a4368dae6a7e3223dabb03",
+      "size": 302299
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/CaptivePortal/CaptivePortal.ino",
+      "sha256": "cd353a0f5356486d2e5ff8e605ecda14dddde03ebc0c1f9c8db55f255847193c",
+      "size": 1667
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/Filters/Filters.ino",
+      "sha256": "b716e31d599b601014f8b32d0c3e3bcfe9c6181f198615c367b564963fd600b7",
+      "size": 4272
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/Issue162/Issue162.ino",
+      "sha256": "8681d841589910570478241a0d376cf5029d6351d1867d004911df485497e9f1",
+      "size": 2830
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/Issue85/Issue85.ino",
+      "sha256": "3bdeea8443d52dae9d799c353e66317d10e5d6a4f5c5b35cbd45bf57d6b9bac0",
+      "size": 2897
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/SimpleServer/SimpleServer.ino",
+      "sha256": "b36817a58c82a0ec2d9eb99c956a04796033824fbaab2f3670934a332069e220",
+      "size": 30393
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/SSE_perftest/SSE_perftest.ino",
+      "sha256": "f8145898682e6c519930bc64623efd7f51dffc28d424c552f449b7c1f21854b8",
+      "size": 9808
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/StreamFiles/StreamConcat.h",
+      "sha256": "908b3be6edfc827c44555b8be79ae7f0d52baacb1f875ff581c8a164c6fc049d",
+      "size": 926
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/examples/StreamFiles/StreamFiles.ino",
+      "sha256": "52a9f5fe8e09a2eb09e576ae788d8580e6c3c009907e78048ce78b0ebc7d2ba3",
+      "size": 2155
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/library.json",
+      "sha256": "ee97a239d0c34b2a1dcbb3932be7af25907c53d5fcc29cae2ca985029b53efd9",
+      "size": 1350
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/library.properties",
+      "sha256": "6f3ed6b181c29dfed49891d7544327c2a4e6796bff1ef5d2f73c64ba3db5c58d",
+      "size": 426
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/LICENSE",
+      "sha256": "a5681bf9b05db14d86776930017c647ad9e6e56ff6bbcfdf21e5848288dfaf1b",
+      "size": 7651
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/partitions-4MB.csv",
+      "sha256": "fcdf00028d691fd0b9cbf1fe35b13c4f67e311e91182a82a8f205826a7d7b968",
+      "size": 301
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/platformio.ini",
+      "sha256": "c1de65c4afbc7e9d725d1ec01ff1a43902dc009d05aec992e73dd1c497ddabc4",
+      "size": 3812
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/README.ESP32Async.md",
+      "sha256": "dd1bfee15b03076e5bdd892226bb169231af4c4f896b5a0b296e162709f1630a",
+      "size": 78556
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/README.md",
+      "sha256": "da60359cab54b2992a183b607285f3b3516d328c25ca4f457e04004989656a54",
+      "size": 736
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncEventSource.cpp",
+      "sha256": "963925f16a26e462ea14e119d98aad953db7c48c0409f62786d50fc8c4e66045",
+      "size": 13845
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncEventSource.h",
+      "sha256": "ce6718e833877a781c5b4ec56f4090ad3d4d9afc1d2aa7f09f5f66f115bf66b1",
+      "size": 11040
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncJson.cpp",
+      "sha256": "56933498763190a6b7f7a6caee0444750c612b82cc0281cd9000dbc337bc39cf",
+      "size": 4840
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncJson.h",
+      "sha256": "4413950a9d98c391991d8397c86e490f6de4756322cebcd98744895079c59b79",
+      "size": 4324
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncMessagePack.cpp",
+      "sha256": "5b0600968936ac788c69b75c39a790c2a27dd2899bdf70373805cfe892afb8e3",
+      "size": 3541
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncMessagePack.h",
+      "sha256": "9159d5b9d54bad3a0bedbbe1f1a96a9d3dac8373ecfc7d0002d3564d6606544f",
+      "size": 3664
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncWebHeader.cpp",
+      "sha256": "46464e0c8de91ccb7801dfa7fa6101357a84fb346b6305bef8a44c5402a7d04f",
+      "size": 499
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncWebSocket.cpp",
+      "sha256": "51b2c92a1732c0f161f79a15e670c77278a2e5b33f7845b62e33606823175005",
+      "size": 35110
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/AsyncWebSocket.h",
+      "sha256": "d5e03baac5caa6e8183f152e1f08b98f52e6292da16091fe413cbae05a6b1690",
+      "size": 14181
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/BackPort_SHA1Builder.cpp",
+      "sha256": "aeff9a239155a9db375e3ab7d1c1ff919ecd1f7ca25d74eb4ffd8f30f198e94d",
+      "size": 7860
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/BackPort_SHA1Builder.h",
+      "sha256": "3bae08dfd1010ff99a34a9865f725ee56c39c61ed38fe2c61b55c0cb8053ec71",
+      "size": 1318
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/ChunkPrint.cpp",
+      "sha256": "80540ad2e347f214880fc58d76c2866e9c96b7ec4231982ce864f6db625ffb87",
+      "size": 370
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/ChunkPrint.h",
+      "sha256": "9bd9ef120754549a388f3a92d661fae056b2eebf0c6e0116550b74cf939e5774",
+      "size": 406
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/ESPAsyncWebServer.h",
+      "sha256": "6d994f2743952d9f1c3fbf7dafc93b460e4b955bd160037dd11fec7047d1f2a4",
+      "size": 38415
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/literals.h",
+      "sha256": "3ebde47238dad04d680848221edc8985d31fdc5899e9721fe23cac859f427af1",
+      "size": 10124
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/Middleware.cpp",
+      "sha256": "4f1b5ee272f9a9f5ca3641620784ef3b3734dbcfd688173d13a7bcf4f582c493",
+      "size": 7836
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebAuthentication.cpp",
+      "sha256": "e9abd6b722c0b804834e26d97c6352444aed699829adda3c8f4fa2cd7b7445a8",
+      "size": 6667
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebAuthentication.h",
+      "sha256": "62930082d1bae65a79a21d0697e2e0108ca7b2e81867ce39be7ded5037ef1691",
+      "size": 1570
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebHandlerImpl.h",
+      "sha256": "96d3dc5ca6e74522de40c18376286e1e0cd9734914d73247dcea3b7fabcf13ab",
+      "size": 3930
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebHandlers.cpp",
+      "sha256": "e4252563f9a4bc770da7c733cf40b552d4028afe055c1c1c510bc901a81d4e87",
+      "size": 10458
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebRequest.cpp",
+      "sha256": "ad702adab34f6512bc823f3adb8f987e1a11044130aff346c9f59b75da6813ef",
+      "size": 33505
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebResponseImpl.h",
+      "sha256": "4dcb9510830ccd23c65fd0cd57e7c04a74966c1f23ed8892dd43d675ef235570",
+      "size": 7449
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebResponses.cpp",
+      "sha256": "25595181b01e01bf16c19def48254d17d82d8d28b98ed91b03524c215397c1cd",
+      "size": 27616
+    },
+    {
+      "path": "vendor/libs/ESPAsyncWebServer/src/WebServer.cpp",
+      "sha256": "c8fa750ded97f4989635963e4227690767682676204fc4c76f684c02e18eccda",
+      "size": 5589
+    },
+    {
+      "path": "vendor/packs/de/draw/animals.txt",
+      "sha256": "87b3db0c0b900f9629947e1ef67dd02922187ae0a8a0275a4e00e95766300e9f",
+      "size": 365
+    },
+    {
+      "path": "vendor/packs/de/draw/classic.txt",
+      "sha256": "223d0f42a09f8de3ef983e532909566ed0ff1189e7075f25e5a2ec173a10f487",
+      "size": 501
+    },
+    {
+      "path": "vendor/packs/de/draw/fantasy.txt",
+      "sha256": "6d7c7aa7e96f8a914c57d51f849bf28d966af1ae02d8ff2abf10499472655cd5",
+      "size": 371
+    },
+    {
+      "path": "vendor/packs/de/draw/food.txt",
+      "sha256": "951e64f08e94ec94eb504a722645248ab14540dbf8d3a4d85fe26608fb3f4407",
+      "size": 354
+    },
+    {
+      "path": "vendor/packs/de/draw/movies.txt",
+      "sha256": "3fe0ec8d93db06a2ea0a7bb6c9a529e6ecdfa7c16e419a2074a554057245e106",
+      "size": 322
+    },
+    {
+      "path": "vendor/packs/de/draw/nature.txt",
+      "sha256": "bcd09297d0e4ad461c24afa822daac398095e59494ef555c5877ca38a491c388",
+      "size": 352
+    },
+    {
+      "path": "vendor/packs/de/kmk/famous.txt",
+      "sha256": "f93d5d362495212ff63e0aeb8dbc63b7accd24bb965fa285243c18e062ae403b",
+      "size": 561
+    },
+    {
+      "path": "vendor/packs/de/kmk/fiction.txt",
+      "sha256": "c36222bfd86c40f4e254b2a8753d4778282d59d6da6bd20faba6b56c11cf0e0e",
+      "size": 551
+    },
+    {
+      "path": "vendor/packs/de/kmk/historical.txt",
+      "sha256": "471c6e6e42ca727754e65eae5644e2e01c0a7720c4d3ee3a60e14830711d31cd",
+      "size": 592
+    },
+    {
+      "path": "vendor/packs/de/kmk/mix.txt",
+      "sha256": "8d1965b6347729aa190f429c3ca392cecdcca1971f72ffa4727fd532bf4a0060",
+      "size": 537
+    },
+    {
+      "path": "vendor/packs/de/scramble/animals.txt",
+      "sha256": "cecfd300b10f1c594fd8c3f1311b5f0bb77fe72411c3bcc70a91ce1bf1add296",
+      "size": 321
+    },
+    {
+      "path": "vendor/packs/de/scramble/classic.txt",
+      "sha256": "b2e849920308a756ea9ca1f9df1fc7146578a47780228fd332c7c4992b5b59aa",
+      "size": 542
+    },
+    {
+      "path": "vendor/packs/de/scramble/food.txt",
+      "sha256": "0399e9ce8990408037c67244cc4a4ada57e92206a803f9d9e258966ee414e436",
+      "size": 359
+    },
+    {
+      "path": "vendor/packs/de/scramble/music.txt",
+      "sha256": "ccdbefb52706f38b4b51e83d26e6fda3903085aa467e321d3e2c521c667995c2",
+      "size": 376
+    },
+    {
+      "path": "vendor/packs/de/scramble/space.txt",
+      "sha256": "dc1f8a01562a35f9231c1f201e601391aaeb146b3cfe1a4cdcd812facbe4e7b4",
+      "size": 382
+    },
+    {
+      "path": "vendor/packs/de/scramble/sports.txt",
+      "sha256": "4a3e469b96ca36aca37e45554a30f3c557a0c4a2daa3402cbafb253871c4d978",
+      "size": 383
+    },
+    {
+      "path": "vendor/packs/de/spectrum/everyday.txt",
+      "sha256": "fd27cc8ac98ea5dc8338917a2c607636809fd4f55ba4d9e07ee615e477c6376b",
+      "size": 727
+    },
+    {
+      "path": "vendor/packs/de/spectrum/extremes.txt",
+      "sha256": "fe86c8c6bc8b96bca81258a239a0f425f5ee5624db83fbc882b14dedddde881d",
+      "size": 878
+    },
+    {
+      "path": "vendor/packs/de/spectrum/opinions.txt",
+      "sha256": "37a3d1191c8d64315db57d249646df48657000633e842c64b6d4647440438ab2",
+      "size": 935
+    },
+    {
+      "path": "vendor/packs/de/spectrum/tastes.txt",
+      "sha256": "81ac1e98e4caa67857e9d0c150805c5923db979489e0c677b16cf5a40cf9aa60",
+      "size": 871
+    },
+    {
+      "path": "vendor/packs/de/trivia/games.txt",
+      "sha256": "dc83691b7cdc3b4e9813355a8fa9841ec7805199f7081da351c57535cf137580",
+      "size": 1051
+    },
+    {
+      "path": "vendor/packs/de/trivia/general.txt",
+      "sha256": "a4fa8bd00b8d0105d4e1afc4ea8ce6504f025c57a383cef7fd69d5feb34309f8",
+      "size": 1475
+    },
+    {
+      "path": "vendor/packs/de/trivia/geography.txt",
+      "sha256": "42fa5491a5a2717a805cb750af43f045367e2b604de645e0cbdd5750cc86f790",
+      "size": 1117
+    },
+    {
+      "path": "vendor/packs/de/trivia/movies.txt",
+      "sha256": "83d9b5d6357a5a7995876aab3f0c7491866fe0e46dbe2e67a34cd1e5b29957dc",
+      "size": 1999
+    },
+    {
+      "path": "vendor/packs/de/trivia/music.txt",
+      "sha256": "81b91f27490a6abed9a087d9ce953922147f95308cd9a89aa2bcc38d48f4a596",
+      "size": 1049
+    },
+    {
+      "path": "vendor/packs/de/trivia/science.txt",
+      "sha256": "1160eb6fe404bf1384c390eff06c841bfe11199b9c749b1118f63a1ff91a47e3",
+      "size": 1660
+    },
+    {
+      "path": "vendor/packs/de/wyr/absurd.txt",
+      "sha256": "223050e7d9622316135d52c25bbad028604b7d4a766f21522f5b72f18c43fd39",
+      "size": 889
+    },
+    {
+      "path": "vendor/packs/de/wyr/everyday.txt",
+      "sha256": "87a987772b9690ad57e0db9c5946b33f8c024b1227681c1f081fbedcb0b978d0",
+      "size": 668
+    },
+    {
+      "path": "vendor/packs/de/wyr/spicy.txt",
+      "sha256": "a5c47fe944b31d44f640dba518dc37575a9c6b43ee18b58d803a2507bc407c83",
+      "size": 1113
+    },
+    {
+      "path": "vendor/packs/de/wyr/spooky.txt",
+      "sha256": "8ca1b1998d70d515125a18b850ad02220d4491df64711ab7c7008d3aeda37801",
+      "size": 892
+    },
+    {
+      "path": "vendor/packs/de/wyr/superpowers.txt",
+      "sha256": "2dc7cdf9f0f7d64343fc7f684b3c3bcc0df26ad916eddc93c36f94cae6c887d9",
+      "size": 689
+    },
+    {
+      "path": "vendor/packs/de/wyr/timespace.txt",
+      "sha256": "3bb1954fc71e7f07ed115aafcf2aed5f1718688c7ac92ac15ec3175d2cd62100",
+      "size": 837
+    },
+    {
+      "path": "vendor/packs/en/draw/animals.txt",
+      "sha256": "f7c992529b4da069b57ca9f98ef7dcdf1b35997b9f048be8db50951c96591695",
+      "size": 358
+    },
+    {
+      "path": "vendor/packs/en/draw/classic.txt",
+      "sha256": "3c485c9bcb45fae3bf089a3e6f89369ebf234fbf31ecf45ac56429158067d371",
+      "size": 477
+    },
+    {
+      "path": "vendor/packs/en/draw/fantasy.txt",
+      "sha256": "1beb1ab2891914d766feea1ccd8a64734399ddfeab3f434d2de17ccf9921955e",
+      "size": 359
+    },
+    {
+      "path": "vendor/packs/en/draw/food.txt",
+      "sha256": "6c6b270be83dc65d8590da1e21b98b6eef2334d257463fa065a224ac4aaaeb6b",
+      "size": 357
+    },
+    {
+      "path": "vendor/packs/en/draw/movies.txt",
+      "sha256": "e8478f1c53034eb277ec82fb259e9c4233cf8b147bf03340d1fdee74661aeb07",
+      "size": 321
+    },
+    {
+      "path": "vendor/packs/en/draw/nature.txt",
+      "sha256": "66fc138db000b40b8b767deacb77929a18f3c9adf2562b488bb4e42d5294e655",
+      "size": 360
+    },
+    {
+      "path": "vendor/packs/en/kmk/famous.txt",
+      "sha256": "35674bb87cf63ae007a2d397a522fa8bbaf0fa977bbc28293cd180ea8898f5ab",
+      "size": 557
+    },
+    {
+      "path": "vendor/packs/en/kmk/fiction.txt",
+      "sha256": "24eefc1f31a7339431ef6bf12eb2212de4df0a635ec47d478f33087e4cd40a4a",
+      "size": 542
+    },
+    {
+      "path": "vendor/packs/en/kmk/historical.txt",
+      "sha256": "55aba3fb2a2301066a9618c94e34ff829517eb210d4ef5603dd6c47f5aef1b40",
+      "size": 578
+    },
+    {
+      "path": "vendor/packs/en/kmk/mix.txt",
+      "sha256": "2e12f48ceb386ab73875cb667a9c051abf0488cc2d95d64ce9c7f8e44dd5c6c2",
+      "size": 533
+    },
+    {
+      "path": "vendor/packs/en/scramble/animals.txt",
+      "sha256": "b04a09b77d82a8ebaf69d3aa6aa736473de4b4085ea5adee9963f549fb5f6910",
+      "size": 333
+    },
+    {
+      "path": "vendor/packs/en/scramble/classic.txt",
+      "sha256": "7cd38517651400e129ac8523c0847aebce09855814ac7e6bfbca2a7553e82a87",
+      "size": 531
+    },
+    {
+      "path": "vendor/packs/en/scramble/food.txt",
+      "sha256": "dbd1c71d085fbebfbf5024c0890f11b9e584bd034fdf8cdf2a4e3a15edb55dc4",
+      "size": 367
+    },
+    {
+      "path": "vendor/packs/en/scramble/music.txt",
+      "sha256": "b8338c40095b7812bce5f0abc1bf313e2c720cf1cf2fccd1864869a5557ea2b7",
+      "size": 360
+    },
+    {
+      "path": "vendor/packs/en/scramble/space.txt",
+      "sha256": "eecfcc2ec45f191d9d58ff94bcfb586ff24637bc13110557dd2803727191ab2f",
+      "size": 369
+    },
+    {
+      "path": "vendor/packs/en/scramble/sports.txt",
+      "sha256": "a329090914d915496b5982a13f111bc560fa90984420e5fc612b8dcc23c59ec4",
+      "size": 361
+    },
+    {
+      "path": "vendor/packs/en/spectrum/everyday.txt",
+      "sha256": "3fc6bead8c747f0cd805b6df174cdd77c6d3aab62e1f628b053d34273eededbe",
+      "size": 703
+    },
+    {
+      "path": "vendor/packs/en/spectrum/extremes.txt",
+      "sha256": "cfb6af8eec1a5e0c05937af672e838bb8be81dc41e057fde1017cce9df977938",
+      "size": 810
+    },
+    {
+      "path": "vendor/packs/en/spectrum/opinions.txt",
+      "sha256": "4cdcc899db2476855c73d795f63c9069cd62787fbafd3f397b301eb65190a1c7",
+      "size": 844
+    },
+    {
+      "path": "vendor/packs/en/spectrum/tastes.txt",
+      "sha256": "c0426c6942288910f8f2d9721741746c852e3ad9df7bb79748d5e98866784a86",
+      "size": 769
+    },
+    {
+      "path": "vendor/packs/en/trivia/games.txt",
+      "sha256": "be8ca56eb0ea9eaadf2e0e698555d7eec0ba2d93b73bcfca22ac3312b7708837",
+      "size": 1025
+    },
+    {
+      "path": "vendor/packs/en/trivia/general.txt",
+      "sha256": "23f094b68bcedea8aee8827d82f0ceae72dcc01d6d55e511f988897bb4008762",
+      "size": 1421
+    },
+    {
+      "path": "vendor/packs/en/trivia/geography.txt",
+      "sha256": "5780fc6ab51fa6e59d36d77e9f04cb2fa57f4a9b9ac56a297db2228de7ae6ace",
+      "size": 1054
+    },
+    {
+      "path": "vendor/packs/en/trivia/movies.txt",
+      "sha256": "9423e1001d91450e2126b437ecacac124b6b5b27e244640717e39d3c1b47cee7",
+      "size": 1949
+    },
+    {
+      "path": "vendor/packs/en/trivia/music.txt",
+      "sha256": "0ff4b2985d8baf7ba300468f7ed58bfe5be6fef844f2981bfc0609f77f3cbbb5",
+      "size": 988
+    },
+    {
+      "path": "vendor/packs/en/trivia/science.txt",
+      "sha256": "9e4e83cb1f85f5efb6856c78a1d2f417d9ac610b719206d4294c3671d718837f",
+      "size": 1596
+    },
+    {
+      "path": "vendor/packs/en/wyr/absurd.txt",
+      "sha256": "b0f91e0e4449300ad147514f178da1d45f8c6cf414ae2a22eeb67c82f48b4abf",
+      "size": 749
+    },
+    {
+      "path": "vendor/packs/en/wyr/everyday.txt",
+      "sha256": "c939e66ddd020362e8804deaa04fb4e861225689a8ef724fc98e865679bd62bf",
+      "size": 592
+    },
+    {
+      "path": "vendor/packs/en/wyr/spicy.txt",
+      "sha256": "8c911ae54a4f14f73bf8abd745df488dbfca28a11bda08e1453ebf28ed5f15ab",
+      "size": 895
+    },
+    {
+      "path": "vendor/packs/en/wyr/spooky.txt",
+      "sha256": "2105bc5fcc6cfce5f39c9404a4acac1958f5f88c30663d6b179446143f1fa9ba",
+      "size": 715
+    },
+    {
+      "path": "vendor/packs/en/wyr/superpowers.txt",
+      "sha256": "48d1c223b0bf65e4cca6a37a63568244fc9a2daaa729161a7f9d1fd10777c91a",
+      "size": 556
+    },
+    {
+      "path": "vendor/packs/en/wyr/timespace.txt",
+      "sha256": "508bd9bd135ab530cdabc72b2600da35ee405b0a81d39a40ad5b5dfc5ae83a3b",
+      "size": 681
+    },
+    {
+      "path": "vendor/packs/pt-br/draw/coisas.txt",
+      "sha256": "f45241d174a75c4b4952ce939c395567e3f4eac44351a06a8877f28023f6c997",
+      "size": 139
+    },
+    {
+      "path": "vendor/packs/pt-br/kmk/famosos.txt",
+      "sha256": "bc39d67c734756079f4e58845c41443318298e05af7ddc143ff6302346fec182",
+      "size": 162
+    },
+    {
+      "path": "vendor/packs/pt-br/scramble/palavras.txt",
+      "sha256": "6bf57bce3b7f85fb48dfc7b14f8ddf987dcfc17c8ffc3ab425f9163074948710",
+      "size": 152
+    },
+    {
+      "path": "vendor/packs/pt-br/spectrum/opostos.txt",
+      "sha256": "b5b939f45964784574a0500b8be8766ac79fa761d8762944ba2e13bec890e65c",
+      "size": 195
+    },
+    {
+      "path": "vendor/packs/pt-br/trivia/geral.txt",
+      "sha256": "55713821d3253900fc270ce38552ec58cdaea19a1a41b572529c9669cee8d2c4",
+      "size": 648
+    },
+    {
+      "path": "vendor/packs/pt-br/wyr/cotidiano.txt",
+      "sha256": "5fe6470d27fd691dbca6c99d98092bd0a1af32239cce24f4cfc03d7f6bf2bf8e",
+      "size": 338
+    },
+    {
+      "path": "vendor/web/index.html.gz",
+      "sha256": "835cc39f0c2edb59d45a792f971cab8f52083e8d069111eb8a46f506c4c0053c",
+      "size": 41586
+    },
+    {
+      "path": "vendor/web/manifest.json",
+      "sha256": "e38d46df93b5ac7be54e02363c97676d1b2e6fc96490c4b0c7e5f725d5bafb3c",
+      "size": 100
+    }
+  ]
+}
