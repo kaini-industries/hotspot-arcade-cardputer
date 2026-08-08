@@ -1262,9 +1262,27 @@ static bool haHistCheckpoint(const HaHost& host, bool force = false) {
 
 // Use after importing an archived record into a freshly-created active session.
 // This records provenance without making it part of the mutable HaHost mirror.
-static bool haHistCheckpointRestored(const HaHost& host, uint32_t sourceNum) {
+[[maybe_unused]] static bool haHistCheckpointRestored(
+    const HaHost& host,
+    uint32_t sourceNum) {
     if(!sourceNum || !haHistBegin()) return false;
     return haHistCheckpointPrepared(host, true, sourceNum);
+}
+
+// Restoring immutable history always creates a distinct active session. This is
+// intentionally different from haHistCheckpointRestored(), which updates the
+// current session and remains available for migration compatibility. Reserving a
+// new number matters when the current active session is empty: there is nothing
+// to archive, but a restore must still have its own identity and provenance.
+static bool haHistStartRestoredActive(const HaHost& host, uint32_t sourceNum) {
+    if(!sourceNum || !haHistBegin() || haHistActive.seq == UINT32_MAX) return false;
+    haHistFromHost(host, *haHistScratch);
+    haHistScratch->num = haHistReserveNum();
+    if(!haHistScratch->num) return false;
+    haHistScratch->seq = haHistActive.seq + 1;
+    haHistScratch->restoredFrom = sourceNum;
+    haHistScratch->archived = false;
+    return haHistWriteActive(*haHistScratch);
 }
 
 // Explicit discard path used only after the host confirms a second warning when

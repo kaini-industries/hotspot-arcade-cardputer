@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 export const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,6 +22,22 @@ export function sourceDateEpoch() {
   const epoch = Number(value);
   if (!Number.isSafeInteger(epoch)) throw new Error('SOURCE_DATE_EPOCH is outside the safe integer range');
   return epoch;
+}
+
+export function readCleanGitSource(repoRoot = REPOSITORY_ROOT) {
+  const status = execFileSync(
+    'git',
+    ['-C', repoRoot, 'status', '--porcelain=v1', '--untracked-files=all'],
+    { encoding: 'utf8' },
+  );
+  if (status !== '') {
+    throw new Error('release source checkout is dirty; commit or remove every tracked and untracked change');
+  }
+  const commit = execFileSync('git', ['-C', repoRoot, 'rev-parse', '--verify', 'HEAD^{commit}'], {
+    encoding: 'utf8',
+  }).trim();
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('release source commit is not a full Git object ID');
+  return { commit, sourceTreeClean: true };
 }
 
 export function readToolchainLock(repoRoot = REPOSITORY_ROOT) {

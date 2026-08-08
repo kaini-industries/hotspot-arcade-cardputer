@@ -7,9 +7,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
 import {
   fileDigest,
+  readCleanGitSource,
   readToolchainLock,
   readUpstreamLock,
   sourceDateEpoch,
@@ -24,13 +24,14 @@ function sha256(path) {
 }
 
 function parseArgs(argv) {
-  const options = { artifactsDir: 'build', tag: '' };
+  const options = { artifactsDir: 'build', tag: '', candidate: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--artifacts-dir') options.artifactsDir = argv[++i] ?? '';
     else if (argv[i] === '--tag') {
       options.tag = argv[++i] ?? '';
       if (!options.tag) throw new Error('--tag requires a value');
     }
+    else if (argv[i] === '--candidate') options.candidate = true;
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
   if (!options.artifactsDir) throw new Error('--artifacts-dir cannot be empty');
@@ -44,7 +45,9 @@ function main() {
       tag: options.tag,
       artifactsDir: options.artifactsDir,
       requireArtifacts: true,
+      candidate: options.candidate,
     });
+    const source = readCleanGitSource(root);
     const artifactsDir = resolve(root, options.artifactsDir);
     const upstream = readUpstreamLock(root);
     const toolchain = readToolchainLock(root);
@@ -61,7 +64,9 @@ function main() {
       version: release.version,
       tag: release.tag,
       repository: CANONICAL_REPOSITORY,
-      commit: execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      commit: source.commit,
+      sourceTreeClean: source.sourceTreeClean,
+      candidate: release.candidate,
       upstream: {
         repository: upstream.repository,
         commit: upstream.commit,

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "ha_network_policy.h"
+#include "ha_ws_flow_policy.h"
 
 // Declared in a real header so Arduino's generated function prototypes see the
 // types before prototypes for sketch-local helpers that use them.
@@ -11,6 +12,7 @@ struct HaWsFlowState {
     bool dirtyState;
     String lobby;
     String state;
+    HaWsQueueTracker queue;
 };
 
 struct HaAuthCounter {
@@ -26,4 +28,3 @@ struct HaAuthClientBucket {
     uint32_t lastSeenMs;
     HaAuthCounter counter;
 };
-

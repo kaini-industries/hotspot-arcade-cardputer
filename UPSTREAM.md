@@ -6,9 +6,9 @@ Everything under `vendor/` is copied from one committed Git object in
 | | |
 | --- | --- |
 | repository | `https://github.com/tarikbc/hotspot-arcade` |
-| commit | `4204458b5231a4e5514aae271eeee2f6ab456672` |
-| describe | `v1.6.0-6-g4204458` |
-| source tree SHA-256 | `aff7e366adf91a88e4353bb4c3a445db4ce902e11c1e83bbd3f1c1fb7ee961db` |
+| commit | `aad6e8ffa03a125aa4d6be14030a3f887d5cde05` |
+| describe | `v1.6.0-7-gaad6e8f` |
+| source tree SHA-256 | `48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606` |
 | web bundle | 1 file(s) |
 | content packs | 70 pack(s) |
 | full file inventory | `UPSTREAM.lock.json` |

@@ -132,6 +132,18 @@ static void testStrictRecordsAndInterruptedActiveWrites() {
     assert(haHistCheckpointRestored(goodHost, 77));
     assert(haHistActive.restoredFrom == 77);
 
+    // A restore is a new active session even when the current active session is
+    // empty and therefore has nothing to archive first.
+    HaHost empty = {};
+    assert(haHistCheckpoint(empty, true));
+    const uint32_t emptyActiveNumber = haHistActive.num;
+    const uint32_t emptyActiveGeneration = haHistActive.seq;
+    assert(haHistStartRestoredActive(goodHost, 78));
+    assert(haHistActive.num != emptyActiveNumber);
+    assert(haHistActive.seq == emptyActiveGeneration + 1);
+    assert(haHistActive.restoredFrom == 78);
+    assert(haHistActive.count == 2);
+
     // A pre-protocol host snapshot has no durable identity. It must remain
     // checkpointable without inventing a transient PID-shaped identity.
     HaHost legacyHost = {};
@@ -398,6 +410,25 @@ static void testEveryLegacyMigrationWriteIsRetryable() {
     }
 }
 
+static void testGenerationExhaustionNeverWraps() {
+    resetHistoryRuntime();
+    assert(haHistBegin());
+    HaHost baseline = hostWithPlayers();
+    assert(haHistCheckpoint(baseline, true));
+    haHistActive.seq = UINT32_MAX;
+    // An unchanged no-op remains safe, but every operation requiring a durable
+    // successor fails instead of reusing generation one.
+    assert(haHistCheckpoint(baseline, false));
+    HaHost changed = hostWithPlayers(99, 5);
+    assert(!haHistCheckpoint(changed, true));
+    assert(!haHistStartNewActive(changed));
+    assert(!haHistArchive(changed));
+    HaHistSession archive = haHistActive;
+    archive.archived = true;
+    archive.seq = 1;
+    assert(!haHistArchiveCommitsActive(archive, haHistActive));
+}
+
 int main() {
     testStrictRecordsAndInterruptedActiveWrites();
     testArchiveEqualityAndIndexCommitFailure();
@@ -408,6 +439,7 @@ int main() {
     testMigrationNeverOverwritesAConflictingArchive();
     testMigrationRejectsMalformedHeadersAndNvsWriteFailures();
     testEveryLegacyMigrationWriteIsRetryable();
+    testGenerationExhaustionNeverWraps();
     resetHistoryRuntime();
     std::cout << "native history tests passed\n";
 }

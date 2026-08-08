@@ -29,13 +29,14 @@ jobs:
           python -m pip install --disable-pip-version-check --require-hashes
           -r tools/requirements-release.txt
 
-      - name: Install and run locked actionlint
+      - name: Bootstrap checksum-pinned CI tools
+        run: tools/bootstrap-ci-tools.sh
+
+      - name: Run locked actionlint
         run: |
           ACTIONLINT_VERSION="$(node -p "require('./tools/toolchain.lock.json').hostTools.actionlint.version")"
-          mkdir -p "$RUNNER_TEMP/actionlint-bin"
-          GOBIN="$RUNNER_TEMP/actionlint-bin" go install "github.com/rhysd/actionlint/cmd/actionlint@v$ACTIONLINT_VERSION"
-          "$RUNNER_TEMP/actionlint-bin/actionlint" -version
-          "$RUNNER_TEMP/actionlint-bin/actionlint" .github/workflows/*.yml
+          test "$(actionlint -version)" = "$ACTIONLINT_VERSION"
+          actionlint .github/workflows/*.yml
 
       - name: Validate release metadata and tooling
         run: |

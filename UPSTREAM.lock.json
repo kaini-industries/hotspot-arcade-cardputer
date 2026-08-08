@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "repository": "https://github.com/tarikbc/hotspot-arcade",
-  "commit": "4204458b5231a4e5514aae271eeee2f6ab456672",
-  "describe": "v1.6.0-6-g4204458",
-  "sourceTreeSha256": "aff7e366adf91a88e4353bb4c3a445db4ce902e11c1e83bbd3f1c1fb7ee961db",
+  "commit": "aad6e8ffa03a125aa4d6be14030a3f887d5cde05",
+  "describe": "v1.6.0-7-gaad6e8f",
+  "sourceTreeSha256": "48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606",
   "files": [
     {
       "path": "vendor/engine/ha_games.h",
-      "sha256": "71bc71c0df62c15cadbae58ae3a15862a364c764315aa4248338db0e21ad04e2",
-      "size": 211716
+      "sha256": "519023f015f77341889bacface649c6bf1a110b6741d659b9f4292d35fd6a9f2",
+      "size": 212312
     },
     {
       "path": "vendor/engine/ha_json.h",
@@ -762,8 +762,8 @@
     },
     {
       "path": "vendor/web/index.html.gz",
-      "sha256": "591774766f4d96c846f896603d3e6e07c38f0ab94293d5aefd9dca2c03a648b6",
-      "size": 44504
+      "sha256": "27286924af5f82b08df7d41ecc66e27ece98c25afc46ebcfc56ea4eb841ec1bb",
+      "size": 44748
     },
     {
       "path": "vendor/web/manifest.json",

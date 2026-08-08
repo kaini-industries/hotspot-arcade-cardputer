@@ -29,6 +29,9 @@ build_and_run test_config
 build_and_run test_active_nvs
 build_and_run test_history
 build_and_run test_host
+build_and_run test_ap_reconnect
+build_and_run test_ssid_transaction
 build_and_run test_network_policy
+build_and_run test_ws_flow_policy
 build_and_run test_event_format
 build_and_run test_async_queue

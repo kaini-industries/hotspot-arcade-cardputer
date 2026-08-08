@@ -18,6 +18,16 @@ for key in sys.argv[2].split("."): value=value[key]
 print(value)' "$LOCK" "$1"
 }
 
+verify_sha256() {
+  local expected="$1"
+  local path="$2"
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$path" | shasum -a 256 --check --status
+  else
+    printf '%s  %s\n' "$expected" "$path" | sha256sum --check --status
+  fi
+}
+
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) TARGET="darwin-arm64" ;;
   Linux-x86_64) TARGET="linux-x64" ;;
@@ -26,23 +36,22 @@ esac
 
 CLI_VERSION="$(json_value hostTools.arduinoCli.version)"
 CLI="$TOOLS_BIN/arduino-cli"
-if command -v arduino-cli >/dev/null 2>&1 && [[ "$(arduino-cli version | awk '{print $3}')" == "$CLI_VERSION" ]]; then
-  CLI="$(command -v arduino-cli)"
-elif [[ ! -x "$CLI" ]] || [[ "$($CLI version | awk '{print $3}')" != "$CLI_VERSION" ]]; then
-  ARCHIVE_URL="$(json_value hostTools.arduinoCli.archives.$TARGET.url)"
-  ARCHIVE_FILE="$(json_value hostTools.arduinoCli.archives.$TARGET.file)"
-  ARCHIVE_SHA="$(json_value hostTools.arduinoCli.archives.$TARGET.sha256)"
-  ARCHIVE_PATH="$DOWNLOADS/$ARCHIVE_FILE"
+ARCHIVE_URL="$(json_value hostTools.arduinoCli.archives.$TARGET.url)"
+ARCHIVE_FILE="$(json_value hostTools.arduinoCli.archives.$TARGET.file)"
+ARCHIVE_SHA="$(json_value hostTools.arduinoCli.archives.$TARGET.sha256)"
+ARCHIVE_PATH="$DOWNLOADS/$ARCHIVE_FILE"
+if [[ ! -f "$ARCHIVE_PATH" ]] || ! verify_sha256 "$ARCHIVE_SHA" "$ARCHIVE_PATH"; then
   curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
     --output "$ARCHIVE_PATH.tmp" "$ARCHIVE_URL"
-  if command -v shasum >/dev/null 2>&1; then
-    printf '%s  %s\n' "$ARCHIVE_SHA" "$ARCHIVE_PATH.tmp" | shasum -a 256 --check --status
-  else
-    printf '%s  %s\n' "$ARCHIVE_SHA" "$ARCHIVE_PATH.tmp" | sha256sum --check --status
-  fi
+  verify_sha256 "$ARCHIVE_SHA" "$ARCHIVE_PATH.tmp"
   mv "$ARCHIVE_PATH.tmp" "$ARCHIVE_PATH"
-  tar -xzf "$ARCHIVE_PATH" -C "$TOOLS_BIN" arduino-cli
 fi
+verify_sha256 "$ARCHIVE_SHA" "$ARCHIVE_PATH" || { echo "arduino-cli archive hash mismatch" >&2; exit 3; }
+CLI_UNPACK="$(mktemp -d "$ROOT/.tools/arduino-cli.XXXXXX")"
+trap 'rm -rf "$CLI_UNPACK"' EXIT
+tar -xzf "$ARCHIVE_PATH" -C "$CLI_UNPACK" arduino-cli
+[[ -x "$CLI_UNPACK/arduino-cli" ]] || { echo "arduino-cli archive has no executable" >&2; exit 3; }
+mv "$CLI_UNPACK/arduino-cli" "$CLI"
 [[ "$($CLI version | awk '{print $3}')" == "$CLI_VERSION" ]] || { echo "arduino-cli version mismatch" >&2; exit 3; }
 export ARDUINO_CLI="$CLI"
 export PATH="$TOOLS_BIN:$PATH"

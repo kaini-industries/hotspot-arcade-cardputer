@@ -111,6 +111,24 @@ static void testMirrorRetryAndGenerationExhaustion() {
     assert(haConfigGet().generation == UINT32_MAX);
 }
 
+static void testRejectedTransactionKeepsRuntimeAndBootValueAligned() {
+    resetAll();
+    assert(haConfigBegin("Prior SSID", 1, 0));
+    const uint32_t priorGeneration = haConfigGet().generation;
+    SD.writeRemaining = 0;
+    Preferences::failWrites = true;
+    assert(!haConfigSave("Candidate SSID", 1, 0));
+    assert(std::strcmp(haConfigGet().ssid, "Prior SSID") == 0);
+    assert(haConfigGet().generation == priorGeneration);
+
+    SD.writeRemaining = -1;
+    Preferences::failWrites = false;
+    resetRuntime();
+    assert(haConfigBegin("compiled default", 1, 0));
+    assert(std::strcmp(haConfigGet().ssid, "Prior SSID") == 0);
+    assert(haConfigGet().generation == priorGeneration);
+}
+
 static void testLegacyMigrationIsIdempotent() {
     resetAll();
     SD.putText(HA_CONFIG_V1, "ssid=Legacy Party\naudio=2\nlang=1\n");
@@ -146,6 +164,7 @@ int main() {
     testEveryInterruptedWriteKeepsOldGeneration();
     testLegacyMigrationIsIdempotent();
     testMirrorRetryAndGenerationExhaustion();
+    testRejectedTransactionKeepsRuntimeAndBootValueAligned();
     testBoundsAndValidation();
     std::cout << "native config tests passed\n";
 }

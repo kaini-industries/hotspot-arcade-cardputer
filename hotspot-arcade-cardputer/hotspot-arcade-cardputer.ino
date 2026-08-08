@@ -40,9 +40,11 @@
 #include "ha_bundle.h"
 #include "ha_games.h"
 #include "ha_host.h"
+#include "ha_ap_reconnect.h"
 #include "ha_history.h"
 #include "ha_active_nvs.h"
 #include "ha_config.h"
+#include "ha_ssid_transaction.h"
 #include "ha_content.h"
 #include "ha_async_queue.h"
 #include "ha_diagnostics.h"
@@ -113,7 +115,7 @@ enum HaApState : uint8_t {
     HaApReconnectWait = 3,
 };
 static HaApState haApState = HaApBooting;
-static uint8_t haApRequiredPlayers = 0;
+static HaApRequiredRoster haApRequiredRoster = {};
 static uint32_t haApReconnectStartedMs = 0;
 #define HA_AP_RECONNECT_WINDOW_MS 600000UL
 
@@ -126,26 +128,40 @@ static Engine engine;
 static SemaphoreHandle_t engineMutex = nullptr;
 static uint16_t haEngineLockDepth = 0;
 static uint32_t haEngineLockStartedUs = 0;
-#define ENGINE_LOCK()                                                        \
-    do {                                                                     \
-        BaseType_t haLockResult =                                            \
-            xSemaphoreTakeRecursive(engineMutex, portMAX_DELAY);             \
-        configASSERT(haLockResult == pdTRUE);                                \
-        (void)haLockResult;                                                  \
-        if(haEngineLockDepth++ == 0) haEngineLockStartedUs = micros();        \
-    } while(0)
-#define ENGINE_UNLOCK()                                                      \
-    do {                                                                     \
-        configASSERT(haEngineLockDepth > 0);                                 \
-        if(--haEngineLockDepth == 0) {                                       \
-            uint32_t haHeldUs = micros() - haEngineLockStartedUs;            \
-            if(haHeldUs > haDiagnostics.maxEngineLockUs)                     \
-                haDiagnostics.maxEngineLockUs = haHeldUs;                    \
-        }                                                                    \
-        BaseType_t haUnlockResult = xSemaphoreGiveRecursive(engineMutex);     \
-        configASSERT(haUnlockResult == pdTRUE);                              \
-        (void)haUnlockResult;                                                \
-    } while(0)
+
+// Every critical section is a real C++ lifetime. The paired macros add only the
+// lexical scope around an RAII guard, so returns and future exception-enabled test
+// builds cannot strand the recursive mutex. Declarations that must outlive the
+// section are intentionally made before ENGINE_LOCK().
+class HaEngineGuard {
+public:
+    HaEngineGuard() {
+        BaseType_t result = xSemaphoreTakeRecursive(engineMutex, portMAX_DELAY);
+        configASSERT(result == pdTRUE);
+        locked = result == pdTRUE;
+        if(locked && haEngineLockDepth++ == 0) haEngineLockStartedUs = micros();
+    }
+    ~HaEngineGuard() {
+        if(!locked) return;
+        configASSERT(haEngineLockDepth > 0);
+        if(--haEngineLockDepth == 0) {
+            uint32_t heldUs = micros() - haEngineLockStartedUs;
+            if(heldUs > haDiagnostics.maxEngineLockUs)
+                haDiagnostics.maxEngineLockUs = heldUs;
+        }
+        BaseType_t result = xSemaphoreGiveRecursive(engineMutex);
+        configASSERT(result == pdTRUE);
+        (void)result;
+    }
+    HaEngineGuard(const HaEngineGuard&) = delete;
+    HaEngineGuard& operator=(const HaEngineGuard&) = delete;
+
+private:
+    bool locked = false;
+};
+
+#define ENGINE_LOCK() do { HaEngineGuard haEngineGuard
+#define ENGINE_UNLOCK() (void)haEngineGuard; } while(false)
 
 #define HA_PERSIST_PROBE_MS 250UL
 #define HA_PERSIST_SD_COALESCE_MS 1000UL
@@ -227,18 +243,11 @@ static void haWsFlowEnd(uint32_t wsId) {
     if(flow) *flow = HaWsFlowState{};
 }
 
-static bool haWsReplaceableType(const char* type) {
-    static const char* const types[] = {
-        "lobby", "trivia", "duel", "draw", "pong", "wyr", "scramble",
-        "react", "gc", "bs", "spectrum", "kmk", "chess"
-    };
-    for(const char* candidate : types)
-        if(strcmp(type, candidate) == 0) return true;
-    return false;
-}
-
-static void haWsCacheState(HaWsFlowState& flow, const char* type, const String& msg) {
-    if(strcmp(type, "lobby") == 0) {
+static void haWsCacheState(
+    HaWsFlowState& flow,
+    HaWsOutputClass outputClass,
+    const String& msg) {
+    if(outputClass == HaWsOutputLobbyState) {
         flow.lobby = msg;
         flow.dirtyLobby = true;
     } else {
@@ -246,6 +255,25 @@ static void haWsCacheState(HaWsFlowState& flow, const char* type, const String& 
         flow.dirtyState = true;
     }
     if(haDiagnostics.outputCoalesced != UINT32_MAX) haDiagnostics.outputCoalesced++;
+}
+
+static void haWsCloseForOutboundFailure(
+    AsyncWebSocketClient& client,
+    const char* reason) {
+    if(haDiagnostics.overloadCloses != UINT32_MAX) haDiagnostics.overloadCloses++;
+    client.close(1013, reason);
+}
+
+static HaWsOutputClass haWsOutputClass(const String& msg) {
+    char type[16];
+    if(!ha_json_str(msg.c_str(), "t", type, sizeof(type)))
+        return HaWsOutputControl;
+    bool pongHasPhase = false;
+    if(strcmp(type, "pong") == 0) {
+        char phase[16];
+        pongHasPhase = ha_json_str(msg.c_str(), "phase", phase, sizeof(phase));
+    }
+    return haWsClassifyOutput(type, pongHasPhase);
 }
 
 void haWsSendWs(uint32_t wsId, const String& msg) {
@@ -257,27 +285,53 @@ void haWsSendWs(uint32_t wsId, const String& msg) {
     if(queueDepth > haDiagnostics.maxSocketQueue)
         haDiagnostics.maxSocketQueue =
             queueDepth > UINT16_MAX ? UINT16_MAX : (uint16_t)queueDepth;
-    char type[16];
-    bool haveType = ha_json_str(msg.c_str(), "t", type, sizeof(type));
-    bool replaceable = haveType && haWsReplaceableType(type);
-    bool stream = haveType && (strcmp(type, "ink") == 0 || strcmp(type, "pong") == 0);
-    if(stream && queueDepth >= 8) {
-        if(replaceable) haWsCacheState(*flow, type, msg);
+    haWsQueueObserve(flow->queue, queueDepth);
+    HaWsOutputClass outputClass = haWsOutputClass(msg);
+    HaWsOutputAction action = haWsChooseOutputAction(
+        outputClass, queueDepth, flow->queue.controlCount);
+
+    if(action == HaWsOutputDropStream) {
+        if(haWsOutputIsReplaceable(outputClass))
+            haWsCacheState(*flow, outputClass, msg);
         if(haDiagnostics.streamDropped != UINT32_MAX) haDiagnostics.streamDropped++;
         return;
     }
-    if(replaceable && queueDepth >= 4) {
-        haWsCacheState(*flow, type, msg);
+    if(action == HaWsOutputCoalesce) {
+        haWsCacheState(*flow, outputClass, msg);
         return;
     }
-    // Only a nonreplaceable control message can trigger an overload close.
-    // State/stream pressure is handled above without evicting the identity.
-    if(!replaceable && queueDepth >= 16) {
-        if(haDiagnostics.overloadCloses != UINT32_MAX) haDiagnostics.overloadCloses++;
-        client->close(1013, "outbound overload");
+    if(action == HaWsOutputCloseControl) {
+        // ACK processing runs on AsyncTCP, so refresh once immediately before
+        // closing rather than acting on a stale control count.
+        queueDepth = client->queueLen();
+        haWsQueueObserve(flow->queue, queueDepth);
+        action = haWsChooseOutputAction(
+            outputClass, queueDepth, flow->queue.controlCount);
+    }
+    if(action == HaWsOutputCloseControl) {
+        haWsCloseForOutboundFailure(*client, "outbound control overload");
         return;
     }
-    if(!client->text(msg) && replaceable) haWsCacheState(*flow, type, msg);
+
+    if(client->text(msg)) {
+        // A successful enqueue below the library's fixed queue capacity must
+        // always fit our equally sized tracker. Recover by reconnecting if the
+        // two ever disagree instead of losing control-count integrity.
+        if(!haWsQueueRecord(flow->queue, outputClass))
+            haWsCloseForOutboundFailure(*client, "outbound tracking failure");
+        return;
+    }
+
+    HaWsSendFailureAction failure = haWsChooseSendFailureAction(outputClass);
+    if(failure == HaWsFailureCacheSnapshot)
+        haWsCacheState(*flow, outputClass, msg);
+    else if(failure == HaWsFailureDropMessage) {
+        if(haDiagnostics.streamDropped != UINT32_MAX) haDiagnostics.streamDropped++;
+    } else
+        // Welcome, config, pause, reject, toast, and heartbeat responses are
+        // nonreplaceable. A failed enqueue closes only this client so protocol
+        // v2 resume can recover it with a fresh authoritative snapshot.
+        haWsCloseForOutboundFailure(*client, "outbound control send failed");
 }
 void haWsCloseWs(uint32_t wsId) {
     if(wsId) ws.close(wsId, 1008, "identity takeover");
@@ -294,14 +348,24 @@ static void haWsFlushDirty() {
         HaWsFlowState& flow = haWsFlow[i];
         if(!flow.wsId || (!flow.dirtyLobby && !flow.dirtyState)) continue;
         AsyncWebSocketClient* client = ws.client(flow.wsId);
-        if(!client || client->queueLen() >= 4) continue;
-        if(flow.dirtyLobby && client->text(flow.lobby)) {
-            flow.dirtyLobby = false;
-            flow.lobby = "";
-        }
-        if(flow.dirtyState && client->queueLen() < 4 && client->text(flow.state)) {
-            flow.dirtyState = false;
-            flow.state = "";
+        if(!client) continue;
+        for(uint8_t attempt = 0; attempt < 2; attempt++) {
+            size_t queueDepth = client->queueLen();
+            haWsQueueObserve(flow.queue, queueDepth);
+            HaWsDirtyChoice choice = haWsChooseDirtyRetry(
+                flow.dirtyLobby, flow.dirtyState, queueDepth);
+            if(choice == HaWsDirtyNone) break;
+            String& pending = choice == HaWsDirtyLobby ? flow.lobby : flow.state;
+            HaWsOutputClass outputClass = choice == HaWsDirtyLobby ?
+                HaWsOutputLobbyState : HaWsOutputGameState;
+            if(!client->text(pending)) break; // retain dirty snapshot for next tick
+            if(!haWsQueueRecord(flow.queue, outputClass)) {
+                haWsCloseForOutboundFailure(*client, "outbound tracking failure");
+                break;
+            }
+            if(choice == HaWsDirtyLobby) flow.dirtyLobby = false;
+            else flow.dirtyState = false;
+            pending = "";
         }
     }
 }
@@ -532,8 +596,9 @@ static void onWsEvent(
     size_t len) {
     (void)srv;
     if(type == WS_EVT_CONNECT) {
+        HaSocketAdmission admission = HaSocketObjectsFull;
         ENGINE_LOCK();
-        HaSocketAdmission admission = haSocketConnect(haSockets, client->id(), millis());
+        admission = haSocketConnect(haSockets, client->id(), millis());
         bool flowReady = admission == HaSocketAccepted && haWsFlowBegin(client->id());
         if(!flowReady && admission == HaSocketAccepted) {
             haSocketDisconnect(haSockets, client->id());
@@ -688,13 +753,18 @@ static void stopPortalTransport() {
     Serial.println("[ha] AP transport stopped");
 }
 
-static void haPortalResume() {
+static void haPortalResume(bool expireDetachedNow = false) {
+    uint32_t now = millis();
     ENGINE_LOCK();
-    engine.transportResume(millis());
+    // At the exact planned-window deadline, detached seats are finalized while
+    // game time is still frozen. All-required-ready and explicit host resume use
+    // the ordinary path, which starts the normal two-minute grace for anyone the
+    // host chose not to wait for.
+    engine.transportResume(now, expireDetachedNow);
     haHostLog("session resumed");
     ENGINE_UNLOCK();
     haApState = HaApRunning;
-    haApRequiredPlayers = 0;
+    haApRequiredClear(haApRequiredRoster);
     haApReconnectStartedMs = 0;
 }
 
@@ -703,7 +773,7 @@ static void haPortalResume() {
 static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) {
     if(!portalRunning) return true;
     ENGINE_LOCK();
-    haApRequiredPlayers = (uint8_t)haHostPlayerCount();
+    haApRequiredCapture(haApRequiredRoster, haHost);
     engine.announceServerPause(
         reason,
         reconnectSsid ? reconnectSsid : apName,
@@ -732,18 +802,26 @@ static bool haPortalStartReconnect() {
     if(!startPortalTransport()) return false;
     haApState = HaApReconnectWait;
     haApReconnectStartedMs = millis();
-    if(!haApRequiredPlayers) haPortalResume();
+    if(!haApRequiredRoster.count && !haApRequiredRoster.unidentified)
+        haPortalResume();
     return true;
 }
 
 static void haPortalTick(uint32_t now) {
     if(haApState != HaApReconnectWait || !portalRunning) return;
+    HaApReconnectDecision decision = HaApReconnectDecisionWait;
     ENGINE_LOCK();
-    uint8_t online = (uint8_t)haHostPlayerCount();
+    decision = haApReconnectEvaluate(
+        haApRequiredRoster,
+        haHost,
+        now,
+        haApReconnectStartedMs,
+        HA_AP_RECONNECT_WINDOW_MS);
     ENGINE_UNLOCK();
-    if(online >= haApRequiredPlayers ||
-       (uint32_t)(now - haApReconnectStartedMs) >= HA_AP_RECONNECT_WINDOW_MS)
+    if(decision == HaApReconnectDecisionAllRequiredOnline)
         haPortalResume();
+    else if(decision == HaApReconnectDecisionWindowExpired)
+        haPortalResume(true);
 }
 
 // ---------------- host actions (called from the UI, on the loop task) ----------
@@ -778,31 +856,64 @@ void haHostRoundEnd() {
 
 void haHostCheckpoint() {
     if(!haPersistence.ready) return;
+    bool dirty = false;
     ENGINE_LOCK();
-    bool dirty = haPersistence.dirty;
+    dirty = haPersistence.dirty;
     ENGINE_UNLOCK();
     if(dirty && !haPersistenceCheckpoint(true))
         Serial.println("[ha] requested active checkpoint failed");
 }
 
+static bool haPersistSsidConfig(const char* ssid) {
+    bool saved = haConfigSave(ssid, haAudioLevel, haLang);
+    if(!saved) {
+        if(haDiagnostics.sdFailures != UINT32_MAX) haDiagnostics.sdFailures++;
+        Serial.println("[ha] config checkpoint failed");
+    }
+    return saved;
+}
+
+static bool haStartSsidTransport(const char*) {
+    return haPortalStartReconnect();
+}
+
 void haHostApplySsid(const char* ssid) {
-    if(!ssid || !ssid[0] || strcmp(ssid, apName) == 0) return;
-    char previous[sizeof(apName)];
-    strlcpy(previous, apName, sizeof(previous));
+    if(!ssid || !ssid[0] || strnlen(ssid, sizeof(apName)) >= sizeof(apName) ||
+       strcmp(ssid, apName) == 0)
+        return;
     bool wasUp = portalRunning;
     if(wasUp && !haPortalPauseAndStop("ssid_change", ssid)) return;
 
-    strlcpy(apName, ssid, sizeof(apName));
-    haCfgSave();
-    if(!wasUp) return;
-    if(haPortalStartReconnect()) return;
-
-    Serial.println("[ha] new SSID failed; restoring prior SSID");
-    strlcpy(apName, previous, sizeof(apName));
-    haCfgSave();
-    if(!haPortalStartReconnect()) {
+    HaSsidTransactionResult result = haSsidApplyTransaction(
+        apName,
+        sizeof(apName),
+        ssid,
+        wasUp,
+        haPersistSsidConfig,
+        haStartSsidTransport);
+    switch(result) {
+    case HaSsidCandidateRejectedPriorRunning:
+        Serial.println("[ha] new SSID was not persisted; retaining prior SSID");
+        break;
+    case HaSsidCandidateRejectedPriorOffline:
+        haApState = HaApManualOff;
+        Serial.println("[ha] new SSID rejected and prior SSID restart failed; AP remains paused");
+        break;
+    case HaSsidFallbackRunning:
+        Serial.println("[ha] new SSID failed; prior SSID restored");
+        break;
+    case HaSsidFallbackOffline:
         haApState = HaApManualOff;
         Serial.println("[ha] prior SSID fallback also failed; AP remains paused");
+        break;
+    case HaSsidRollbackRejectedCandidateOffline:
+        // The candidate remains both the runtime value and the last successful
+        // config generation. Never run the old AP while reboot selects the new.
+        haApState = HaApManualOff;
+        Serial.println("[ha] SSID rollback was not persisted; AP remains paused");
+        break;
+    default:
+        break;
     }
 }
 
@@ -864,11 +975,8 @@ static void haSdBegin() {
     }
 }
 
-void haCfgSave() { // non-static: the UI calls this after any settings mutation
-    if(!haConfigSave(apName, haAudioLevel, haLang)) {
-        if(haDiagnostics.sdFailures != UINT32_MAX) haDiagnostics.sdFailures++;
-        Serial.println("[ha] config checkpoint failed");
-    }
+bool haCfgSave() { // non-static: the UI calls this after any settings mutation
+    return haPersistSsidConfig(apName);
 }
 
 static bool haPersistenceStorageBegin() {
@@ -1386,7 +1494,7 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
         haPersistenceUseHistoryMetadata();
     }
 
-    if(!haHistCheckpointRestored(*haPersistenceCandidate, session.num)) {
+    if(!haHistStartRestoredActive(*haPersistenceCandidate, session.num)) {
         // Archive may already have advanced the active slot. Put the unchanged RAM
         // session back into that slot so a failed restore never changes boot state.
         bool rolledBack = haHistCheckpointPrepared(
@@ -1460,8 +1568,9 @@ static void haPersistenceTick() {
     // this timer. Keep the cross-media generation floor synchronized regardless.
     if(haPersistence.usingSd) haPersistenceUseHistoryMetadata();
 
+    bool dirty = false;
     ENGINE_LOCK();
-    bool dirty = haPersistence.dirty;
+    dirty = haPersistence.dirty;
     ENGINE_UNLOCK();
     if(haPersistence.usingSd) {
         if(dirty &&
@@ -1532,9 +1641,10 @@ void setup() {
     haHostReset();
     if(!haPersistenceInitializeActive()) haStartupFatal("active session recovery");
 
+    bool contentReady = false;
     ENGINE_LOCK();
     engine.reset(millis());
-    bool contentReady = haContentLoadAll(engine, HA_LANG_CODE[haLang]);
+    contentReady = haContentLoadAll(engine, HA_LANG_CODE[haLang]);
     if(contentReady) {
         if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
         // Setup work and first-start storage I/O are not game time. AP startup
@@ -1581,8 +1691,9 @@ void loop() {
     if(haLangDirty) { // Settings changed the language -> re-stream that language's packs
         haLangDirty = false;
         uint8_t requestedLang = haLang;
+        bool contentReady = false;
         ENGINE_LOCK();
-        bool contentReady = haContentLoadAll(engine, HA_LANG_CODE[requestedLang]);
+        contentReady = haContentLoadAll(engine, HA_LANG_CODE[requestedLang]);
         if(contentReady) {
             haLoadedLang = requestedLang;
             char event[HA_EV_LEN];

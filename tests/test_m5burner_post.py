@@ -82,6 +82,9 @@ def release_fixture(directory: Path):
         "version": RELEASE_VERSION,
         "tag": RELEASE_TAG,
         "repository": publisher.EXPECTED_REPOSITORY,
+        "commit": "1" * 40,
+        "sourceTreeClean": True,
+        "candidate": False,
         "artifacts": [
             {
                 "filename": artifact.name,
@@ -156,6 +159,9 @@ class PublisherValidationTests(unittest.TestCase):
                 lambda value: value.update(repository="https://github.com/attacker/fork"),
                 "canonical release repository",
             ),
+            (lambda value: value.update(commit="short"), "source commit"),
+            (lambda value: value.update(sourceTreeClean=False), "clean source checkout"),
+            (lambda value: value.update(candidate=True), "candidate build"),
         )
         for update, message in cases:
             with self.subTest(message=message), tempfile.TemporaryDirectory() as temp:

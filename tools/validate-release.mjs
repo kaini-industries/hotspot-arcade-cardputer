@@ -21,7 +21,13 @@ const SEMVER_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Z
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
-  const options = { tag: '', repositorySlug: '', artifactsDir: '', requireArtifacts: false };
+  const options = {
+    tag: '',
+    repositorySlug: '',
+    artifactsDir: '',
+    requireArtifacts: false,
+    candidate: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--tag') {
@@ -34,6 +40,7 @@ function parseArgs(argv) {
       options.repositorySlug = argv[++i] ?? '';
       if (!options.repositorySlug) throw new Error('--repository requires a value');
     } else if (arg === '--require-artifacts') options.requireArtifacts = true;
+    else if (arg === '--candidate') options.candidate = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
   return options;
@@ -55,7 +62,14 @@ function releaseNotesVersion(repoRoot) {
 }
 
 export function validateRelease(
-  { repoRoot = root, tag = '', repositorySlug = '', artifactsDir = '', requireArtifacts = false } = {},
+  {
+    repoRoot = root,
+    tag = '',
+    repositorySlug = '',
+    artifactsDir = '',
+    requireArtifacts = false,
+    candidate = false,
+  } = {},
 ) {
   const errors = [];
   let version = '';
@@ -84,7 +98,15 @@ export function validateRelease(
     } catch (error) {
       errors.push(error.message);
     }
-    if (tag && tag !== `v${version}`) errors.push(`tag ${tag} does not match VERSION v${version}`);
+    if (candidate) {
+      const prefix = `v${version}-rc.`;
+      const sequence = tag.startsWith(prefix) ? tag.slice(prefix.length) : '';
+      if (!/^[1-9][0-9]*$/.test(sequence)) {
+        errors.push(`candidate tag ${tag || '(missing)'} must match ${prefix}<positive integer>`);
+      }
+    } else if (tag && tag !== `v${version}`) {
+      errors.push(`tag ${tag} does not match VERSION v${version}`);
+    }
   }
   if (repositorySlug && repositorySlug !== CANONICAL_REPOSITORY_SLUG) {
     errors.push(`release repository ${repositorySlug} is not canonical ${CANONICAL_REPOSITORY_SLUG}`);
@@ -120,7 +142,12 @@ export function validateRelease(
   }
 
   if (errors.length) throw new Error(errors.join('\n'));
-  return { version, tag: tag || `v${version}`, repository: CANONICAL_REPOSITORY };
+  return {
+    version,
+    tag: tag || `v${version}`,
+    candidate,
+    repository: CANONICAL_REPOSITORY,
+  };
 }
 
 function main() {

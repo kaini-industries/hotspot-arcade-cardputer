@@ -135,6 +135,47 @@ const lock = {
     actionlint: {
       version: '1.7.12',
       sourceSha256: '454800bd4f854592bcfe79b161f71d56e35940eb7016e48a26dd356adc9d400a',
+      archives: {
+        'linux-x64': {
+          url: 'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz',
+          file: 'actionlint_1.7.12_linux_amd64.tar.gz',
+          member: 'actionlint',
+          sha256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8',
+        },
+      },
+    },
+    syft: {
+      version: '1.50.0',
+      archives: {
+        'linux-x64': {
+          url: 'https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz',
+          file: 'syft_1.50.0_linux_amd64.tar.gz',
+          member: 'syft',
+          sha256: 'bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788',
+        },
+      },
+    },
+    cosign: {
+      version: '3.0.6',
+      archives: {
+        'linux-x64': {
+          url: 'https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64',
+          file: 'cosign-linux-amd64-3.0.6',
+          member: 'cosign',
+          sha256: 'c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74',
+        },
+      },
+    },
+    githubCli: {
+      version: '2.93.0',
+      archives: {
+        'linux-x64': {
+          url: 'https://github.com/cli/cli/releases/download/v2.93.0/gh_2.93.0_linux_amd64.tar.gz',
+          file: 'gh_2.93.0_linux_amd64.tar.gz',
+          member: 'gh_2.93.0_linux_amd64/bin/gh',
+          sha256: '02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0',
+        },
+      },
     },
   },
   pythonReleaseDependencies: {

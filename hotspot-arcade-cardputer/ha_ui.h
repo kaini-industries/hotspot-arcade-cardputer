@@ -20,7 +20,7 @@ void haHostRoundEnd();
 void haHostCheckpoint();
 void haHostApplySsid(const char* ssid);
 void haHostTogglePortal();
-void haCfgSave(); // persist SSID/audio/language to the redundant config stores
+bool haCfgSave(); // persist SSID/audio/language to the redundant config stores
 const char* haHostSsid();
 const char* haHostJoinCode();
 String haHostIp();
@@ -772,14 +772,20 @@ static void haUiBack() {
 static void haUiSettingAdjust(int dir) {
     switch(haUiCursor) {
     case 1: // Audio off/low/high
+    {
+        uint8_t previous = haAudioLevel;
         haAudioLevel = (uint8_t)((haAudioLevel + 3 + dir) % 3);
-        haCfgSave();
+        if(!haCfgSave()) haAudioLevel = previous;
         break;
+    }
     case 2: // Language
+    {
+        uint8_t previous = haLang;
         haLang = (uint8_t)((haLang + HA_LANG_COUNT + dir) % HA_LANG_COUNT);
-        haLangDirty = true;
-        haCfgSave();
+        if(haCfgSave()) haLangDirty = true;
+        else haLang = previous;
         break;
+    }
     case 3: // Access Point on/off
         haHostTogglePortal();
         break;
@@ -991,14 +997,20 @@ static void haUiEnter() {
             haUiView = HA_VIEW_SSID;
             break;
         case 1: // Audio -> cycle off/low/high
+        {
+            uint8_t previous = haAudioLevel;
             haAudioLevel = (uint8_t)((haAudioLevel + 1) % 3);
-            haCfgSave();
+            if(!haCfgSave()) haAudioLevel = previous;
             break;
+        }
         case 2: // Language -> cycle, persist, and ask the .ino to re-stream packs
+        {
+            uint8_t previous = haLang;
             haLang = (uint8_t)((haLang + 1) % HA_LANG_COUNT);
-            haLangDirty = true;
-            haCfgSave();
+            if(haCfgSave()) haLangDirty = true;
+            else haLang = previous;
             break;
+        }
         case 3: // AP -> toggle
             haHostTogglePortal();
             break;

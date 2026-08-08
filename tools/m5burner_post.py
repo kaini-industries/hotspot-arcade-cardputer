@@ -217,6 +217,14 @@ def validate_artifacts(
         raise ValidationError("build manifest version/tag does not match the requested release")
     if manifest.get("repository") != EXPECTED_REPOSITORY:
         raise ValidationError("build manifest repository is not the canonical release repository")
+    if not isinstance(manifest.get("commit"), str) or not re.fullmatch(
+        r"[0-9a-f]{40}", manifest["commit"]
+    ):
+        raise ValidationError("build manifest source commit is not a full Git object ID")
+    if manifest.get("sourceTreeClean") is not True:
+        raise ValidationError("build manifest was not produced from a clean source checkout")
+    if manifest.get("candidate") is not False:
+        raise ValidationError("release publication refuses candidate build manifests")
     manifest_artifacts = _manifest_artifacts(manifest)
 
     artifacts: dict[str, Path] = {}

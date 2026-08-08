@@ -32,6 +32,38 @@ for (const field of ['installerCommit', 'sdkReleaseCommit']) {
 const nvmrc = readFileSync(join(root, '.nvmrc'), 'utf8').trim();
 if (nvmrc !== lock.node.version) throw new Error(`.nvmrc ${nvmrc} does not match lock ${lock.node.version}`);
 const digest = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+const requirements = lock.pythonReleaseDependencies?.requirements;
+if (
+  typeof requirements !== 'string' ||
+  requirements.startsWith('/') ||
+  requirements.includes('\\') ||
+  requirements.split('/').includes('..')
+) {
+  throw new Error('pythonReleaseDependencies.requirements must be a safe repository-relative path');
+}
+const requirementsPath = join(root, requirements);
+if (digest(requirementsPath) !== lock.pythonReleaseDependencies.sha256) {
+  throw new Error(`${requirements} does not match pythonReleaseDependencies.sha256`);
+}
+for (const toolName of ['actionlint', 'syft', 'cosign', 'githubCli']) {
+  const tool = lock.hostTools?.[toolName];
+  const archive = tool?.archives?.['linux-x64'];
+  if (
+    typeof tool?.version !== 'string' ||
+    !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(tool.version) ||
+    typeof archive?.url !== 'string' ||
+    !archive.url.startsWith('https://github.com/') ||
+    typeof archive?.file !== 'string' ||
+    archive.file.includes('/') ||
+    typeof archive?.member !== 'string' ||
+    archive.member.startsWith('/') ||
+    archive.member.includes('\\') ||
+    archive.member.split('/').includes('..') ||
+    !/^[0-9a-f]{64}$/.test(archive?.sha256 ?? '')
+  ) {
+    throw new Error(`hostTools.${toolName} has an invalid linux-x64 archive lock`);
+  }
+}
 const checksum = (value) => value?.replace(/^SHA-256:/, '');
 const compareArchive = (locked, indexed, context) => {
   const actual = {

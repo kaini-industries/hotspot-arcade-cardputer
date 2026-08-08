@@ -29,11 +29,14 @@ const root = resolve(import.meta.dirname, '..');
 const lock = JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'), 'utf8'));
 const compiler = lock.arduino.coreTools.find((entry) => entry.name === 'esp-x32');
 if (!compiler) throw new Error('toolchain lock has no esp-x32 compiler entry');
+// Reproducibility jobs share one bootstrapped Arduino data directory with fresh
+// detached worktrees. Honor the same documented Arduino CLI environment override
+// used by compile instead of assuming every worktree has its own ignored cache.
+const arduinoData = process.env.ARDUINO_DIRECTORIES_DATA
+  ? resolve(process.env.ARDUINO_DIRECTORIES_DATA)
+  : join(root, '.cache', 'arduino', 'data');
 const sizeTool = join(
-  root,
-  '.cache',
-  'arduino',
-  'data',
+  arduinoData,
   'packages',
   'esp32',
   'tools',

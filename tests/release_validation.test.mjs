@@ -11,6 +11,7 @@ import {
   CANONICAL_REPOSITORY_SLUG,
   validateRelease,
 } from '../tools/validate-release.mjs';
+import { readCleanGitSource } from '../tools/release-provenance.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -43,6 +44,39 @@ test('a mismatched tag is rejected before publishing', () => {
   );
 });
 
+test('release candidates require an explicit numbered rc tag for this VERSION', () => {
+  const candidate = validateRelease({
+    repoRoot: root,
+    tag: 'v0.6.0-rc.1',
+    candidate: true,
+  });
+  assert.equal(candidate.candidate, true);
+  assert.equal(candidate.tag, 'v0.6.0-rc.1');
+  for (const tag of ['', 'v0.6.0', 'v0.6.0-rc.0', 'v0.6.1-rc.1', 'v0.6.0-beta.1']) {
+    assert.throws(
+      () => validateRelease({ repoRoot: root, tag, candidate: true }),
+      /candidate tag .* must match v0\.6\.0-rc\.<positive integer>/,
+    );
+  }
+});
+
+test('clean source provenance rejects tracked and untracked changes', () => {
+  const repository = mkdtempSync(join(tmpdir(), 'hotspot-source-provenance-test-'));
+  const git = (...args) => execFileSync('git', ['-C', repository, ...args], { stdio: 'pipe' });
+  git('init', '--quiet');
+  git('config', 'user.name', 'Release Test');
+  git('config', 'user.email', 'release-test@example.invalid');
+  writeFileSync(join(repository, 'tracked.txt'), 'clean\n');
+  git('add', 'tracked.txt');
+  git('commit', '--quiet', '-m', 'fixture');
+  const clean = readCleanGitSource(repository);
+  assert.match(clean.commit, /^[0-9a-f]{40}$/);
+  assert.equal(clean.sourceTreeClean, true);
+
+  writeFileSync(join(repository, 'untracked.txt'), 'dirty\n');
+  assert.throws(() => readCleanGitSource(repository), /source checkout is dirty/);
+});
+
 test('release packaging emits stable checksums and manifest', () => {
   const build = mkdtempSync(join(tmpdir(), 'hotspot-release-test-'));
   writeFileSync(join(build, 'hotspot-arcade-cardputer.ino.bin'), 'app fixture');
@@ -62,6 +96,9 @@ test('release packaging emits stable checksums and manifest', () => {
   const manifest = JSON.parse(firstManifest);
   assert.equal(manifest.repository, CANONICAL_REPOSITORY);
   assert.equal(manifest.version, '0.6.0');
+  assert.match(manifest.commit, /^[0-9a-f]{40}$/);
+  assert.equal(manifest.sourceTreeClean, true);
+  assert.equal(manifest.candidate, false);
   assert.equal(manifest.sourceDateEpoch, 1700000000);
   assert.equal(manifest.upstream.repository, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).repository);
   assert.equal(manifest.upstream.sourceTreeSha256, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).sourceTreeSha256);
@@ -142,8 +179,14 @@ test('workflows gate publication on isolated reproducibility and verified attest
     assert.match(workflow, /release-hashes\.mjs/);
     assert.match(workflow, /diff -u "\$RUNNER_TEMP\/first\.sha256" "\$RUNNER_TEMP\/second\.sha256"/);
     assert.match(workflow, /tools\/test-native\.sh --tsan/);
+    assert.match(workflow, /tools\/bootstrap-ci-tools\.sh/);
+    assert.doesNotMatch(workflow, /go install/);
   }
   assert.match(release, /\n  workflow_dispatch:\n/);
+  assert.match(release, /default: 0\.6\.0-rc\.1/);
+  assert.match(release, /VALIDATE_ARGS\+=\(--candidate\)/);
+  assert.match(release, /BUILD_ARGS\+=\(--candidate\)/);
+  assert.match(release, /refs\/tags\/\$RELEASE_TAG\^\{commit\}/);
   assert.match(release, /verify-build-provenance:/);
   assert.match(release, /gh attestation verify/);
   assert.match(release, /--signer-workflow/);
@@ -152,4 +195,28 @@ test('workflows gate publication on isolated reproducibility and verified attest
     assert.notEqual(start, -1);
     assert.match(release.slice(start, start + 180), /if: github\.event_name == 'push'/);
   }
+});
+
+test('CI host tools use reviewed release archives instead of runner globals', () => {
+  const lock = JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'), 'utf8'));
+  for (const name of ['actionlint', 'syft', 'cosign', 'githubCli']) {
+    const tool = lock.hostTools[name];
+    assert.match(tool.version, /^\d+\.\d+\.\d+$/);
+    assert.match(tool.archives['linux-x64'].url, /^https:\/\/github\.com\//);
+    assert.match(tool.archives['linux-x64'].sha256, /^[0-9a-f]{64}$/);
+  }
+  const bootstrap = readFileSync(join(root, 'tools', 'bootstrap-ci-tools.sh'), 'utf8');
+  assert.match(bootstrap, /sha256sum --check --status/);
+  assert.match(bootstrap, /curl --proto '=https' --tlsv1\.2/);
+});
+
+test('fresh detached candidates generate headers and share the locked Arduino data path', () => {
+  const candidate = readFileSync(join(root, 'tools', 'build-release-candidate.sh'), 'utf8');
+  const firstGeneration = candidate.indexOf('node tools/gen-assets.mjs\n');
+  const build = candidate.indexOf('tools/build.sh');
+  const finalCheck = candidate.indexOf('node tools/gen-assets.mjs --check');
+  assert.ok(firstGeneration >= 0 && firstGeneration < build && build < finalCheck);
+
+  const budgets = readFileSync(join(root, 'tools', 'check-build-budgets.mjs'), 'utf8');
+  assert.match(budgets, /process\.env\.ARDUINO_DIRECTORIES_DATA/);
 });
