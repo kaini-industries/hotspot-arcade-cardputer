@@ -212,6 +212,8 @@ test('workflows gate publication on isolated reproducibility and verified attest
     assert.match(workflow, /tools\/test-native\.sh --tsan/);
     assert.match(workflow, /tools\/bootstrap-ci-tools\.sh/);
     assert.match(workflow, /tools\/bootstrap-node\.sh/);
+    assert.match(workflow, /ACTIONLINT_ACTUAL/);
+    assert.doesNotMatch(workflow, /test "\$\(actionlint -version\)"/);
     assert.doesNotMatch(workflow, /actions\/setup-node/);
     assert.doesNotMatch(workflow, /go install/);
   }
@@ -246,6 +248,8 @@ test('CI host tools use reviewed release archives instead of runner globals', ()
   const bootstrap = readFileSync(join(root, 'tools', 'bootstrap-ci-tools.sh'), 'utf8');
   assert.match(bootstrap, /sha256sum --check --status/);
   assert.match(bootstrap, /curl --proto '=https' --tlsv1\.2/);
+  assert.match(bootstrap, /actionlint version mismatch/);
+  assert.doesNotMatch(bootstrap, /\[\[ "\$\(actionlint -version\)"/);
   const nodeBootstrap = readFileSync(join(root, 'tools', 'bootstrap-node.sh'), 'utf8');
   assert.match(nodeBootstrap, /node\.archives\.\$TARGET/);
   assert.match(lock.node.archives['linux-x64'].sha256, /^[0-9a-f]{64}$/);

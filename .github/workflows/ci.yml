@@ -34,7 +34,9 @@ jobs:
       - name: Run locked actionlint
         run: |
           ACTIONLINT_VERSION="$(node -p "require('./tools/toolchain.lock.json').hostTools.actionlint.version")"
-          test "$(actionlint -version)" = "$ACTIONLINT_VERSION"
+          ACTIONLINT_OUTPUT="$(actionlint -version)"
+          ACTIONLINT_ACTUAL="${ACTIONLINT_OUTPUT%%$'\n'*}"
+          test "$ACTIONLINT_ACTUAL" = "$ACTIONLINT_VERSION"
           actionlint .github/workflows/*.yml
 
       - name: Validate release metadata and tooling

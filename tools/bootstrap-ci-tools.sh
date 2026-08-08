@@ -82,7 +82,13 @@ if [[ -n "${GITHUB_PATH:-}" ]]; then printf '%s\n' "$TOOLS_BIN" >> "$GITHUB_PATH
 for tool in "$@"; do
   case "$tool" in
     actionlint)
-      [[ "$(actionlint -version)" == "$(json_value hostTools.actionlint.version)" ]]
+      actual="$(actionlint -version)"
+      actual="${actual%%$'\n'*}"
+      expected="$(json_value hostTools.actionlint.version)"
+      [[ "$actual" == "$expected" ]] || {
+        echo "actionlint version mismatch: expected $expected, got $actual" >&2
+        exit 4
+      }
       ;;
     syft)
       syft version | grep -Eq "Version:[[:space:]]+$(json_value hostTools.syft.version)([[:space:]]|$)"
