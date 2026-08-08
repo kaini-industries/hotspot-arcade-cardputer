@@ -23,6 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Everything under vendor/engine/, vendor/web/ and vendor/packs/ comes from the
-upstream source recorded in UPSTREAM.md and is used unmodified. vendor/libs/
-contains third-party libraries distributed under their own licenses; see
+upstream source recorded in UPSTREAM.lock.json and is used unmodified; see
+UPSTREAM.md for the pinned commit and attribution. vendor/libs/ contains
+third-party libraries distributed under their own licenses; see
 THIRD_PARTY_NOTICES.md and the LICENSE file within each component.
