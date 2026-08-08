@@ -56,10 +56,7 @@ const sectionSize = (name) => {
   return value;
 };
 const staticDram = sectionSize('.dram0.data') + sectionSize('.dram0.bss');
-// The protocol-17 baseline retained by this toolchain/vendoring PR uses 95,640
-// bytes. Protocol 18 removes that legacy overhead and tightens this to the
-// release target of 90 KiB in the next stacked PR.
-const staticDramLimit = 100 * 1024;
+const staticDramLimit = 90 * 1024;
 if (staticDram > staticDramLimit) {
   throw new Error(`static DRAM is ${staticDram} bytes; limit is ${staticDramLimit}`);
 }

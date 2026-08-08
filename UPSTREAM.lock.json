@@ -1,24 +1,24 @@
 {
   "schema": 1,
   "repository": "https://github.com/kaini-industries/hotspot-arcade",
-  "commit": "25ad21523c9a66eb712911545792ee8ebf6281ad",
-  "describe": "v1.6.0-3-g25ad215",
-  "sourceTreeSha256": "f26daf924bf8229e6da3b51128124e471d1a33925c0f09c2f95baa4b56bbd92c",
+  "commit": "aad6e8ffa03a125aa4d6be14030a3f887d5cde05",
+  "describe": "v1.6.0-7-gaad6e8f",
+  "sourceTreeSha256": "48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606",
   "files": [
     {
       "path": "vendor/engine/ha_games.h",
-      "sha256": "fe087cee68d175c513ac931e4f6951c25f40b9a71177e16991ac50814c613487",
-      "size": 177152
+      "sha256": "519023f015f77341889bacface649c6bf1a110b6741d659b9f4292d35fd6a9f2",
+      "size": 212312
     },
     {
       "path": "vendor/engine/ha_json.h",
-      "sha256": "68aafd536447d92228b67ed59032f5d67d86fec63ad98c47f96e5eab541b707c",
-      "size": 2600
+      "sha256": "d793a1dc71575ef8e138e1667b0521e784f87a5bafca0823b003edfe27bb8ccb",
+      "size": 7589
     },
     {
       "path": "vendor/engine/ha_proto.h",
-      "sha256": "96784cd618c342bbb22316884c9d6e4a8c5bf5c1be06323211f9652f272e759d",
-      "size": 2904
+      "sha256": "a6ac21254b336165c3a6d447e6f5063f5c6dadc07f48da9b300769bd660211e3",
+      "size": 3449
     },
     {
       "path": "vendor/libs/AsyncTCP/.clang-format",
@@ -762,8 +762,8 @@
     },
     {
       "path": "vendor/web/index.html.gz",
-      "sha256": "835cc39f0c2edb59d45a792f971cab8f52083e8d069111eb8a46f506c4c0053c",
-      "size": 41586
+      "sha256": "27286924af5f82b08df7d41ecc66e27ece98c25afc46ebcfc56ea4eb841ec1bb",
+      "size": 44748
     },
     {
       "path": "vendor/web/manifest.json",
