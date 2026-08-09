@@ -64,8 +64,20 @@ jobs:
 
       - name: Build two isolated release candidates and compare every hash
         run: |
-          REPRO_WORKTREE="$RUNNER_TEMP/hotspot-repro-worktree"
+          REPRO_WORKTREE_FIRST="$RUNNER_TEMP/hotspot-repro-worktree-first"
+          REPRO_WORKTREE_SECOND="$RUNNER_TEMP/hotspot-repro-worktree-second-distinct-root"
+          REPRO_BUILD_CACHE_FIRST="$RUNNER_TEMP/hotspot-repro-build-cache-first"
+          REPRO_BUILD_CACHE_SECOND="$RUNNER_TEMP/hotspot-repro-build-cache-second-distinct-root"
           REPRO_FIRST="$RUNNER_TEMP/hotspot-repro-first"
+          EXPECTED_RELEASE_OUTPUTS=10
+          test "$REPRO_WORKTREE_FIRST" != "$REPRO_WORKTREE_SECOND"
+          test "$REPRO_BUILD_CACHE_FIRST" != "$REPRO_BUILD_CACHE_SECOND"
+          cleanup_repro_worktrees() {
+            git worktree remove --force "$REPRO_WORKTREE_FIRST" 2>/dev/null || true
+            git worktree remove --force "$REPRO_WORKTREE_SECOND" 2>/dev/null || true
+            rm -rf -- "$REPRO_BUILD_CACHE_FIRST" "$REPRO_BUILD_CACHE_SECOND"
+          }
+          trap cleanup_repro_worktrees EXIT
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
           export SOURCE_DATE_EPOCH
           export ARDUINO_DIRECTORIES_DATA="$PWD/.cache/arduino/data"
@@ -74,17 +86,22 @@ jobs:
           ARDUINO_CLI="$(command -v arduino-cli)"
           export ARDUINO_CLI
           CI_CANDIDATE_TAG="v$(tr -d '[:space:]' < VERSION)-rc.1"
-          git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
-          "$REPRO_WORKTREE/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
-          node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/first.sha256"
+          git worktree add --detach "$REPRO_WORKTREE_FIRST" "$GITHUB_SHA"
+          ARDUINO_BUILD_CACHE_PATH="$REPRO_BUILD_CACHE_FIRST" \
+            "$REPRO_WORKTREE_FIRST/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
+          node "$REPRO_WORKTREE_FIRST/tools/release-hashes.mjs" "$REPRO_WORKTREE_FIRST" > "$RUNNER_TEMP/first.sha256"
           mkdir -p "$REPRO_FIRST"
-          cp -R "$REPRO_WORKTREE/build" "$REPRO_FIRST/build"
-          cp -R "$REPRO_WORKTREE/firmware" "$REPRO_FIRST/firmware"
-          git worktree remove --force "$REPRO_WORKTREE"
-          git worktree add --detach "$REPRO_WORKTREE" "$GITHUB_SHA"
-          "$REPRO_WORKTREE/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
-          node "$REPRO_WORKTREE/tools/release-hashes.mjs" "$REPRO_WORKTREE" > "$RUNNER_TEMP/second.sha256"
+          cp -R "$REPRO_WORKTREE_FIRST/build" "$REPRO_FIRST/build"
+          cp -R "$REPRO_WORKTREE_FIRST/firmware" "$REPRO_FIRST/firmware"
+          git worktree add --detach "$REPRO_WORKTREE_SECOND" "$GITHUB_SHA"
+          ARDUINO_BUILD_CACHE_PATH="$REPRO_BUILD_CACHE_SECOND" \
+            "$REPRO_WORKTREE_SECOND/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate
+          node "$REPRO_WORKTREE_SECOND/tools/release-hashes.mjs" "$REPRO_WORKTREE_SECOND" > "$RUNNER_TEMP/second.sha256"
+          test "$(wc -l < "$RUNNER_TEMP/first.sha256")" -eq "$EXPECTED_RELEASE_OUTPUTS"
+          test "$(wc -l < "$RUNNER_TEMP/second.sha256")" -eq "$EXPECTED_RELEASE_OUTPUTS"
           diff -u "$RUNNER_TEMP/first.sha256" "$RUNNER_TEMP/second.sha256"
+          cleanup_repro_worktrees
+          trap - EXIT
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

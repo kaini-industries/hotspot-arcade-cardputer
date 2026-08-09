@@ -205,10 +205,60 @@ test('release metadata derives upstream repository provenance only from the stri
 test('workflows gate publication on isolated reproducibility and verified attestations', () => {
   const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
   const release = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
-  for (const workflow of [ci, release]) {
+  const hashInventory = readFileSync(join(root, 'tools', 'release-hashes.mjs'), 'utf8');
+  assert.deepEqual(
+    [...hashInventory.matchAll(/^  '((?:build|firmware)\/[^']+)',$/gm)].map((match) => match[1]),
+    [
+      'build/hotspot-arcade-cardputer.ino.bin',
+      'build/hotspot-arcade-cardputer.full.bin',
+      'build/hotspot-arcade-cardputer-m5burner.zip',
+      'build/hotspot-arcade-cardputer.spdx.json',
+      'build/build-manifest.json',
+      'build/SHA256SUMS',
+      'firmware/cardputer/bootloader_0x0.bin',
+      'firmware/cardputer/partitions_0x8000.bin',
+      'firmware/cardputer/boot_app0_0xe000.bin',
+      'firmware/cardputer/hotspot-arcade_0x10000.bin',
+    ],
+  );
+  for (const [name, workflow] of [['ci', ci], ['release', release]]) {
     assert.equal((workflow.match(/git worktree add --detach/g) ?? []).length, 2);
-    assert.match(workflow, /release-hashes\.mjs/);
+    const assignments = Object.fromEntries(
+      [...workflow.matchAll(/^\s+(REPRO_WORKTREE_(?:FIRST|SECOND))="([^"]+)"$/gm)]
+        .map((match) => [match[1], match[2]]),
+    );
+    assert.deepEqual(Object.keys(assignments).sort(), ['REPRO_WORKTREE_FIRST', 'REPRO_WORKTREE_SECOND'], name);
+    assert.notEqual(assignments.REPRO_WORKTREE_FIRST, assignments.REPRO_WORKTREE_SECOND, name);
+    assert.match(assignments.REPRO_WORKTREE_FIRST, /^\$RUNNER_TEMP\//, name);
+    assert.match(assignments.REPRO_WORKTREE_SECOND, /^\$RUNNER_TEMP\//, name);
+    assert.doesNotMatch(workflow, /^\s+REPRO_WORKTREE=/m, name);
+
+    const buildCaches = Object.fromEntries(
+      [...workflow.matchAll(/^\s+(REPRO_BUILD_CACHE_(?:FIRST|SECOND))="([^"]+)"$/gm)]
+        .map((match) => [match[1], match[2]]),
+    );
+    assert.deepEqual(Object.keys(buildCaches).sort(), ['REPRO_BUILD_CACHE_FIRST', 'REPRO_BUILD_CACHE_SECOND'], name);
+    assert.notEqual(buildCaches.REPRO_BUILD_CACHE_FIRST, buildCaches.REPRO_BUILD_CACHE_SECOND, name);
+    assert.match(buildCaches.REPRO_BUILD_CACHE_FIRST, /^\$RUNNER_TEMP\//, name);
+    assert.match(buildCaches.REPRO_BUILD_CACHE_SECOND, /^\$RUNNER_TEMP\//, name);
+    const selectedCaches = [...workflow.matchAll(/ARDUINO_BUILD_CACHE_PATH="\$(REPRO_BUILD_CACHE_(?:FIRST|SECOND))"/g)]
+      .map((match) => match[1]);
+    assert.deepEqual(selectedCaches, ['REPRO_BUILD_CACHE_FIRST', 'REPRO_BUILD_CACHE_SECOND'], name);
+
+    const addedRoots = [...workflow.matchAll(/git worktree add --detach "\$(REPRO_WORKTREE_(?:FIRST|SECOND))"/g)]
+      .map((match) => match[1]);
+    assert.deepEqual(addedRoots, ['REPRO_WORKTREE_FIRST', 'REPRO_WORKTREE_SECOND'], name);
+    const firstAdd = workflow.indexOf('git worktree add --detach "$REPRO_WORKTREE_FIRST"');
+    const secondAdd = workflow.indexOf('git worktree add --detach "$REPRO_WORKTREE_SECOND"');
+    assert.ok(firstAdd >= 0 && firstAdd < secondAdd, name);
+    assert.doesNotMatch(workflow.slice(firstAdd, secondAdd), /git worktree remove --force/, name);
+
+    assert.equal((workflow.match(/release-hashes\.mjs/g) ?? []).length, 2, name);
+    assert.match(workflow, /EXPECTED_RELEASE_OUTPUTS=10/, name);
+    assert.equal((workflow.match(/wc -l < "\$RUNNER_TEMP\/(?:first|second)\.sha256"/g) ?? []).length, 2, name);
     assert.match(workflow, /diff -u "\$RUNNER_TEMP\/first\.sha256" "\$RUNNER_TEMP\/second\.sha256"/);
+    assert.match(workflow, /git worktree remove --force "\$REPRO_WORKTREE_FIRST"/);
+    assert.match(workflow, /git worktree remove --force "\$REPRO_WORKTREE_SECOND"/);
     assert.match(workflow, /tools\/test-native\.sh --tsan/);
     assert.match(workflow, /tools\/bootstrap-ci-tools\.sh/);
     assert.match(workflow, /tools\/bootstrap-node\.sh/);
