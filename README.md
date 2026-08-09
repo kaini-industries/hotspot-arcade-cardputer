@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="docs/img/logo.png" alt="Hotspot Arcade — M5 Cardputer Edition" width="600">
+  <img src="docs/img/logo.png" alt="Hotspot Arcade — M5Stack Cardputer Edition" width="600">
 </p>
 
-# Hotspot Arcade — M5Stack Cardputer
+# Hotspot Arcade — M5Stack Cardputer + Cardputer-Adv
 
 [![build](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml/badge.svg)](https://github.com/kaini-industries/hotspot-arcade-cardputer/actions/workflows/ci.yml)
 [![latest release](https://img.shields.io/github/v/release/kaini-industries/hotspot-arcade-cardputer?sort=semver)](https://github.com/kaini-industries/hotspot-arcade-cardputer/releases/latest)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Hotspot Arcade turns a Cardputer into an offline party-game host. It creates a Wi-Fi
-access point and captive web app; guests play from phone browsers while the Cardputer
-controls the game, keeps the cumulative standings, and stores session history. No
-internet connection or phone app is required.
+Hotspot Arcade turns a Cardputer or Cardputer-Adv into an offline party-game host.
+It creates a Wi-Fi access point and captive web app; guests play from phone browsers
+while the M5Stack device controls the game, keeps the cumulative standings, and
+stores session history. No internet connection or phone app is required.
 
 This Kaini Industries-maintained edition is a Cardputer host port built from the
 [Kaini Industries Hotspot Arcade source](https://github.com/kaini-industries/hotspot-arcade),
@@ -22,6 +22,8 @@ are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPST
 ## v0.6.0 highlights
 
 - Ten authenticated phone players and five concurrent matches in each 1v1 game.
+- One firmware image for the original M5Stack Cardputer and Cardputer-Adv, with
+  runtime board identification and refusal on unsupported M5 boards.
 - Browser protocol v2 with stable resume identities, duplicate-tab takeover, and a
   two-minute transient reconnect grace.
 - Open Wi-Fi with a cryptographically generated six-digit party join code.
@@ -31,26 +33,34 @@ are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPST
 - Bounded socket admission, flow control, rate limits, typed host events, and live
   diagnostics.
 - Reproducible, provenance-locked builds with checksums, SPDX SBOM, attestations,
-  strict ESP image validation, and idempotent M5Burner publishing.
+  strict ESP image validation, and deterministic release packaging.
 
 See [the release notes](docs/RELEASE_NOTES.md), [architecture](docs/ARCHITECTURE.md),
 and [protocol contract](docs/PROTOCOL.md) for details.
 
 ## Hardware and status
 
-The target is Cardputer **v1**: StampS3 / ESP32-S3FN8, 8 MB flash, no PSRAM. The
-locked release build currently uses 1,413,632 bytes of its 3,342,336-byte app
-partition and 57,472 bytes of static DRAM, leaving 1,928,704 bytes of image headroom
-and 270,208 bytes for stack/heap at link time.
+The same firmware image targets both the original M5Stack Cardputer and the
+Cardputer-Adv (also called Cardputer Advance). At startup it accepts only the
+M5Unified runtime identities `M5Cardputer` (board ID 14) and `M5CardputerADV`
+(board ID 24), prints and displays the detected model, and stops before OTA health
+confirmation on any other board identity.
 
-Cardputer ADV is out of scope and unverified because its keyboard controller and
-antenna differ. The automated gates pass, but the v0.6.0 physical acceptance matrix
-(ten-phone soak, power-cut/SD faults, OTA rollback, iOS/Android captive portal, and
-M5Launcher/full-image boot) must be completed on real hardware before release.
+The locked universal build uses 1,412,448 bytes of the 3,342,336-byte app
+partition and 58,248 bytes of static DRAM, leaving 1,929,888 bytes of image
+headroom and 269,432 bytes for stack and heap at link time.
+
+The locked M5GFX 0.2.26 source is amended only by the exact reviewed upstream
+Cardputer-Adv detection fix described under [Developer setup](#developer-setup).
+Automated tests cover the classifier and provenance, but release support is not
+accepted until the complete [two-device hardware matrix](docs/HARDWARE_ACCEPTANCE.md)
+passes on physical examples of both models. M5Burner catalog identity/publication is
+deliberately deferred and is not evidence of hardware compatibility.
 
 ## Install
 
-Release artifacts support two layouts:
+Each release artifact is a single universal image; do not look for a separate
+`-adv` build. The artifacts support two installation layouts on either device:
 
 - `hotspot-arcade-cardputer.ino.bin` at `0x170000` keeps M5Launcher.
 - `hotspot-arcade-cardputer.full.bin` at `0x0` replaces the whole flash layout.
@@ -64,10 +74,17 @@ esptool --chip esp32s3 --port /dev/cu.usbmodemXXXX --baud 921600 \
   write-flash 0x0 hotspot-arcade-cardputer.full.bin
 ```
 
-The app image can also be copied to microSD and launched from M5Launcher. If the
-board does not enter download mode automatically, hold G0 on the StampS3 while
-connecting USB-C. Only use artifacts from the Kaini Industries release page and
-verify them against `SHA256SUMS`.
+The app image can also be copied to microSD and launched from M5Launcher. If a board
+does not enter USB download mode automatically:
+
+- On the original Cardputer, hold `G0` while connecting USB-C.
+- On Cardputer-Adv, switch power off, hold `G0`, switch power on, then release `G0`
+  after the USB download port appears.
+
+Only use artifacts from the Kaini Industries release page or a reviewed CI release
+candidate, and verify them against `SHA256SUMS`. See the
+[hardware acceptance procedure](docs/HARDWARE_ACCEPTANCE.md) before treating a
+candidate as supported.
 
 ## Start and join
 
@@ -175,6 +192,14 @@ and downloaded archive hashes. Arduino data and downloads stay inside
 optional on developer Macs; CI installs their checksum-pinned Linux binaries with
 `tools/bootstrap-ci-tools.sh`.
 
+Cardputer-Adv support keeps the tagged M5GFX 0.2.26 archive and applies only the
+exact fix from [M5GFX PR #233](https://github.com/m5stack/M5GFX/pull/233), upstream
+commit [`5f8a783`](https://github.com/m5stack/M5GFX/commit/5f8a783f7dbc07e8ce5c19cf8779829d1eefcde1).
+The patch file, preimage, patched result, commit, and merge commit are all verified
+from `tools/toolchain.lock.json`; the release SBOM records the patch as a separate
+source package with a `PATCH_FOR` relationship to M5GFX 0.2.26. The build does not
+vendor or track the rest of M5GFX's development branch.
+
 Run the local gates with:
 
 ```sh
@@ -198,9 +223,9 @@ commit.
 
 The implementation has five logical modules:
 
-1. **Runtime and transport** — `hotspot-arcade-cardputer.ino`,
-   `ha_network_policy.h`, and `ha_runtime_types.h` own Wi-Fi, DNS, WebSockets,
-   admission, AP lifecycle, flow control, and loop scheduling.
+1. **Runtime and transport** — `hotspot-arcade-cardputer.ino`, `ha_device.h`,
+   `ha_network_policy.h`, and `ha_runtime_types.h` own board classification, Wi-Fi,
+   DNS, WebSockets, admission, AP lifecycle, flow control, and loop scheduling.
 2. **Engine and host mirror** — `vendor/engine/`, `ha_host.h`, and
    `ha_event_format.h` own authoritative game state, stable identities, cumulative
    awards, bounded typed events, and UI snapshots.
@@ -239,20 +264,19 @@ of whether a corresponding contribution has merged into the original project.
 ## Release process
 
 `VERSION` is the single release version source and is currently `0.6.0`. CI is
-read-only. Tagged release jobs separately attest, create a draft GitHub release, and
-publish through the protected `production` environment; M5Burner publication is
-idempotent and the GitHub release is finalized only after catalog verification.
+read-only. For the current hardware-support phase:
 
-The intended cutover is:
+1. Build/test `0.6.0-rc.2` with workflow dispatch and no publication.
+2. Verify that the manifest marks one image compatible with board IDs 14 and 24.
+3. Complete the full Cardputer and Cardputer-Adv
+   [hardware acceptance matrix](docs/HARDWARE_ACCEPTANCE.md) using that exact image.
+4. Attach the completed evidence and final measured image/DRAM/heap values to the
+   release decision.
 
-1. Build/test `0.6.0-rc.1` with workflow dispatch and no publication.
-2. Complete the Cardputer v1 + microSD hardware acceptance matrix.
-3. Tag `v0.6.0` and create the draft release.
-4. Publish to M5Burner and verify the exact catalog version.
-5. Finalize the GitHub release.
-
-Do not create new tags until the hardened release workflow and catalog identity are
-reviewed on the canonical repository.
+M5Burner catalog identity and publication remain a separate, explicitly deferred
+cutover. The deterministic M5Burner-format archive may still be built and inspected,
+but do not create a final tag or publish the catalog entry as part of this hardware
+qualification work.
 
 ## License and attribution
 

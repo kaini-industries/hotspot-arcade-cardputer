@@ -1,4 +1,5 @@
-// Hotspot Arcade firmware for the M5Stack Cardputer (ESP32-S3).
+// Hotspot Arcade firmware for the M5Stack Cardputer and Cardputer Advance
+// (ESP32-S3).
 //
 // Same game engine as esp32/hotspot-arcade-fw, collapsed onto one device: the
 // Cardputer runs the open AP + captive portal + WebSocket referee AND is its own
@@ -47,6 +48,7 @@
 #include "ha_ssid_transaction.h"
 #include "ha_content.h"
 #include "ha_async_queue.h"
+#include "ha_device.h"
 #include "ha_diagnostics.h"
 #include "ha_event_format.h"
 #include "ha_network_policy.h"
@@ -1010,8 +1012,9 @@ void haHostDiagnosticsSnapshot(HaDiagnostics& dst) {
 
 // ---------------- Arduino entry ----------------
 
-// Cardputer v1 microSD is on its own SPI bus: SCK=40, MISO=39, MOSI=14, CS=12.
-// This is separate from the display bus, so mounting it here doesn't disturb the UI.
+// Cardputer and Cardputer Advance microSD use the same dedicated SPI pins:
+// SCK=40, MISO=39, MOSI=14, CS=12. This is separate from the display bus, so
+// mounting it here doesn't disturb the UI on either supported device.
 static SPIClass haSdSpi(FSPI);
 bool haSdOk = false; // non-static: ha_history.h reads it via `extern`
 static void haSdBegin() {
@@ -1669,6 +1672,23 @@ void setup() {
     auto cfg = M5.config();
     M5Cardputer.begin(cfg, true);
     Serial.begin(115200);
+
+    static_assert(
+        (uint16_t)m5::board_t::board_M5Cardputer == HA_BOARD_ID_CARDPUTER,
+        "M5Unified Cardputer board id changed");
+    static_assert(
+        (uint16_t)m5::board_t::board_M5CardputerADV ==
+            HA_BOARD_ID_CARDPUTER_ADVANCE,
+        "M5Unified Cardputer Advance board id changed");
+    const uint16_t boardId = (uint16_t)M5.getBoard();
+    const HaDeviceKind deviceKind = haDeviceClassify(boardId);
+    haDiagnostics.boardId = boardId;
+    haDiagnostics.deviceKind = deviceKind;
+    Serial.printf(
+        "[ha] device: %s (M5 board id %u)\n",
+        haDeviceName(deviceKind),
+        (unsigned)boardId);
+    if(!haDeviceSupported(deviceKind)) haStartupFatal("unsupported M5 board");
 
     engineMutex = xSemaphoreCreateRecursiveMutex();
     if(!engineMutex) haStartupFatal("engine mutex");

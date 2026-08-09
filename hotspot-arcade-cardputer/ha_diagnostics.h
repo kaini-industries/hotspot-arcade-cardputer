@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "ha_device.h"
 
 struct HaDiagnostics {
     uint32_t freeHeap;
@@ -19,4 +20,6 @@ struct HaDiagnostics {
     uint8_t wsObjects;
     uint8_t wsAuthenticated;
     uint8_t wsPending;
+    uint16_t boardId;
+    HaDeviceKind deviceKind;
 };

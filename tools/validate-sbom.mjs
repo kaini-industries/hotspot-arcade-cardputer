@@ -33,6 +33,23 @@ function verificationCode(files) {
   return digest('sha1', sha1s.join(''));
 }
 
+export function sbomPatchName(library, index) {
+  return `${library.name}-patch-${index + 1}`;
+}
+
+export function sbomPatchSourceInfo(library, patch) {
+  return [
+    `Reviewed patch ${patch.path} for ${library.name}@${library.version}`,
+    `strip ${patch.strip}`,
+    `target ${patch.target}`,
+    `preimage SHA-256 ${patch.preimageSha256}`,
+    `result SHA-256 ${patch.resultSha256}`,
+    `upstream PR ${patch.upstreamRepository}/pull/${patch.upstreamPullRequest}`,
+    `upstream commit ${patch.upstreamCommit}`,
+    `upstream merge commit ${patch.upstreamMergeCommit}`,
+  ].join('; ');
+}
+
 export function validateSbomDocument(document, buildDirectory, repoRoot = root) {
   const upstream = readUpstreamLock(repoRoot);
   const toolchain = readToolchainLock(repoRoot);
@@ -113,6 +130,42 @@ export function validateSbomDocument(document, buildDirectory, repoRoot = root) 
   }
   for (const name of ['AsyncTCP', 'ESPAsyncWebServer']) {
     assert(dependencyPackages.some((item) => item.name === name), `SBOM is missing vendored dependency ${name}`);
+  }
+
+  for (const library of toolchain.arduino.libraries) {
+    for (const [index, patch] of (library.patches ?? []).entries()) {
+      const name = sbomPatchName(library, index);
+      const matches = dependencyPackages.filter(
+        (item) => item.name === name && item.versionInfo === patch.upstreamCommit,
+      );
+      assert(matches.length === 1, `SBOM must contain exactly one reviewed patch ${name}@${patch.upstreamCommit}`);
+      const patchPackage = matches[0];
+      assert(
+        patchPackage.downloadLocation === `${patch.upstreamRepository}/commit/${patch.upstreamCommit}`,
+        `SBOM patch URL mismatch for ${name}`,
+      );
+      assert(checksum(patchPackage, 'SHA256') === patch.sha256, `SBOM patch hash mismatch for ${name}`);
+      assert(patchPackage.primaryPackagePurpose === 'SOURCE', `SBOM patch purpose mismatch for ${name}`);
+      assert(patchPackage.licenseDeclared === 'MIT', `SBOM patch license mismatch for ${name}`);
+      assert(patchPackage.supplier === 'Organization: M5Stack', `SBOM patch supplier mismatch for ${name}`);
+      assert(patchPackage.sourceInfo === sbomPatchSourceInfo(library, patch), `SBOM patch sourceInfo mismatch for ${name}`);
+      assert(
+        fileDigest(join(repoRoot, patch.path)) === patch.sha256,
+        `reviewed patch file hash mismatch for ${patch.path}`,
+      );
+      const basePackages = dependencyPackages.filter(
+        (item) => item.name === library.name && item.versionInfo === library.version,
+      );
+      assert(basePackages.length === 1, `SBOM patch base package is ambiguous for ${name}`);
+      assert(
+        document.relationships.some(
+          (item) => item.spdxElementId === patchPackage.SPDXID &&
+            item.relationshipType === 'PATCH_FOR' &&
+            item.relatedSpdxElement === basePackages[0].SPDXID,
+        ),
+        `SBOM patch relationship is missing for ${name}`,
+      );
+    }
   }
 
   const knownIds = new Set(allIds);

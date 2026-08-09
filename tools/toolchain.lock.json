@@ -540,7 +540,21 @@
         "file": "M5GFX-0.2.26.zip",
         "size": 49248040,
         "sha256": "7e5361350ee2839e7788dc413846bf9445fed310d8e9e1a05137e1ffd0aa9fe3",
-        "dependencies": []
+        "dependencies": [],
+        "patches": [
+          {
+            "path": "tools/patches/M5GFX-0.2.26-cardputer-advance.patch",
+            "sha256": "46a13e4ebe3ae0b79783220d2c47d36ec78a1e8325b55f36fe798c73d98acf3b",
+            "strip": 1,
+            "target": "src/M5GFX.cpp",
+            "preimageSha256": "45d3a72c90fb71a69775970e5628fde365276dfc841461eb761429d08373187c",
+            "resultSha256": "19732e96ecb5bd339505f7935d0bcf4618316150d57036789c6adaeabdb2961d",
+            "upstreamRepository": "https://github.com/m5stack/M5GFX",
+            "upstreamPullRequest": 233,
+            "upstreamCommit": "5f8a783f7dbc07e8ce5c19cf8779829d1eefcde1",
+            "upstreamMergeCommit": "701a8b4d23212644ddd65940ccc9f59107248386"
+          }
+        ]
       },
       {
         "name": "M5Unified",

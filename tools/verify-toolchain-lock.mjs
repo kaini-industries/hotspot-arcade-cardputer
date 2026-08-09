@@ -6,10 +6,18 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  validateArduinoLibraryPatches,
+  verifyInstalledArduinoLibraryPatches,
+} from './arduino-library-patches.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const lock = JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'), 'utf8'));
-const data = join(root, '.cache', 'arduino', 'data');
+const verifyInstalled = process.argv.includes('--installed');
+const configuredDirectory = (variable, fallback) => process.env[variable]
+  ? resolve(root, process.env[variable])
+  : join(root, '.cache', 'arduino', fallback);
+const data = configuredDirectory('ARDUINO_DIRECTORIES_DATA', 'data');
 const indexes = {
   libraries: JSON.parse(readFileSync(join(data, 'library_index.json'), 'utf8')),
   arduino: JSON.parse(readFileSync(join(data, 'package_index.json'), 'utf8')),
@@ -117,10 +125,12 @@ for (const lockedLibrary of lock.arduino.libraries) {
     throw new Error(`${lockedLibrary.name}@${lockedLibrary.version} dependencies changed`);
   }
 }
+validateArduinoLibraryPatches(lock, root);
+if (verifyInstalled) verifyInstalledArduinoLibraryPatches(lock, root);
 
 // Arduino CLI verifies downloads against the index. If an archive remains in its
 // cache, independently verify it against the reviewed lock as well.
-const downloads = join(root, '.cache', 'arduino', 'downloads');
+const downloads = configuredDirectory('ARDUINO_DIRECTORIES_DOWNLOADS', 'downloads');
 const cached = new Map();
 const collect = (directory) => {
   if (!existsSync(directory)) return;
@@ -161,4 +171,6 @@ if (existsSync(join(emsdk, '.git'))) {
   }
 }
 
-console.log(`toolchain lock verified for ${target}: ${archives.length} archive checksums`);
+console.log(
+  `toolchain lock verified for ${target}: ${archives.length} archive checksums${verifyInstalled ? ', patched libraries installed' : ''}`,
+);

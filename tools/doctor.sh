@@ -44,6 +44,11 @@ if [[ -n "$CLI" ]]; then
       bad "$name $version is missing from the project-local Arduino user directory"
     fi
   done
+  if node tools/arduino-library-patches.mjs --check >/dev/null 2>&1; then
+    ok "M5GFX Cardputer Advance fix 5f8a783f7dbc"
+  else
+    bad "M5GFX 0.2.26 is missing the reviewed Cardputer Advance fix"
+  fi
 else
   bad "arduino-cli is missing"
 fi
