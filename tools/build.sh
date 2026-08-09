@@ -7,7 +7,8 @@
 # Output: build/ (see README for the two install routes and their addresses).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT"
 
 # The Cardputer v1 is an 8MB ESP32-S3 with no PSRAM. The board's DEFAULT partition
 # scheme is the 4MB one with a 1.2MB app slot, which this firmware does not fit in.
@@ -25,6 +26,38 @@ ARDUINO_CLI="${ARDUINO_CLI:-$(command -v arduino-cli 2>/dev/null || true)}"
   echo "arduino-cli 1.5.1 is required; run tools/bootstrap.sh" >&2
   exit 3
 }
+
+absolute_directory() {
+  local path="$1"
+  if [[ "$path" != /* ]]; then path="$ROOT/$path"; fi
+  [[ -d "$path" ]] || {
+    echo "required Arduino directory is missing: $path" >&2
+    exit 3
+  }
+  (cd "$path" && pwd -P)
+}
+
+prefix_map_flag() {
+  local source="$1"
+  local target="$2"
+  # Arduino CLI forwards compiler extra_flags as argument tokens; quote
+  # characters become part of the GCC prefix and prevent it from matching.
+  # Restrict these build roots to a shell-safe portable subset instead.
+  if [[ ! "$source" =~ ^/[A-Za-z0-9._/+,:@%-]+$ ]]; then
+    echo "build path contains unsupported characters for compiler prefix maps: $source" >&2
+    exit 3
+  fi
+  printf -- "-ffile-prefix-map=%s=%s" "$source" "$target"
+}
+
+ARDUINO_DATA="$(absolute_directory "${ARDUINO_DIRECTORIES_DATA:-.cache/arduino/data}")"
+ARDUINO_USER="$(absolute_directory "${ARDUINO_DIRECTORIES_USER:-.cache/arduino/user}")"
+# GCC applies the last matching prefix map. Put ROOT first so the more-specific
+# Arduino roots win when a local project stores them below the checkout; in CI
+# those roots are shared outside the two detached worktrees.
+PREFIX_MAP_FLAGS="$(prefix_map_flag "$ROOT" .)"
+PREFIX_MAP_FLAGS+=" $(prefix_map_flag "$ARDUINO_DATA" .arduino-data)"
+PREFIX_MAP_FLAGS+=" $(prefix_map_flag "$ARDUINO_USER" .arduino-user)"
 
 node tools/gen-assets.mjs
 
@@ -45,6 +78,9 @@ trap cleanup EXIT
   --clean \
   --fqbn "$FQBN" \
   --libraries vendor/libs \
+  --build-property "compiler.c.extra_flags=$PREFIX_MAP_FLAGS" \
+  --build-property "compiler.cpp.extra_flags=$PREFIX_MAP_FLAGS" \
+  --build-property "compiler.S.extra_flags=$PREFIX_MAP_FLAGS" \
   --build-path "$BUILD_TMP/work" \
   --output-dir "$BUILD_TMP" \
   hotspot-arcade-cardputer
@@ -53,6 +89,7 @@ node tools/trim-merged.mjs \
   "$BUILD_TMP/hotspot-arcade-cardputer.ino.merged.bin" \
   "$BUILD_TMP/hotspot-arcade-cardputer.full.bin"
 
+node tools/validate-build-paths.mjs "$BUILD_TMP" "$ROOT" "$ARDUINO_DATA" "$ARDUINO_USER"
 node tools/check-build-budgets.mjs "$BUILD_TMP"
 
 # Debug outputs are useful for budget checks but not release artifacts.
