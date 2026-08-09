@@ -59,6 +59,11 @@ PREFIX_MAP_FLAGS="$(prefix_map_flag "$ROOT" .)"
 PREFIX_MAP_FLAGS+=" $(prefix_map_flag "$ARDUINO_DATA" .arduino-data)"
 PREFIX_MAP_FLAGS+=" $(prefix_map_flag "$ARDUINO_USER" .arduino-user)"
 
+# A caller may supply an already-populated Arduino user directory without running
+# bootstrap in this checkout. Refuse to compile unless the installed M5GFX source
+# is the exact reviewed patched result advertised by the manifest and SBOM.
+node tools/arduino-library-patches.mjs --check
+
 node tools/gen-assets.mjs
 
 mkdir -p .cache

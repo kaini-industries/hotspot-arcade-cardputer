@@ -79,6 +79,21 @@ function main() {
       },
       sourceDateEpoch: epoch,
       fqbn: toolchain.arduino.fqbn,
+      singleImage: true,
+      compatibleDevices: [
+        {
+          manufacturer: 'M5Stack',
+          model: 'Cardputer',
+          board: 'M5Cardputer',
+          boardId: 14,
+        },
+        {
+          manufacturer: 'M5Stack',
+          model: 'Cardputer-Adv',
+          board: 'M5CardputerADV',
+          boardId: 24,
+        },
+      ],
       toolchain: {
         lockFile: 'tools/toolchain.lock.json',
         lockSha256: fileDigest(join(root, 'tools', 'toolchain.lock.json')),

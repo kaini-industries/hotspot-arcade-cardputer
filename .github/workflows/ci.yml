@@ -85,7 +85,7 @@ jobs:
           export ARDUINO_DIRECTORIES_USER="$PWD/.cache/arduino/user"
           ARDUINO_CLI="$(command -v arduino-cli)"
           export ARDUINO_CLI
-          CI_CANDIDATE_TAG="v$(tr -d '[:space:]' < VERSION)-rc.1"
+          CI_CANDIDATE_TAG="v$(tr -d '[:space:]' < VERSION)-rc.2"
           git worktree add --detach "$REPRO_WORKTREE_FIRST" "$GITHUB_SHA"
           ARDUINO_BUILD_CACHE_PATH="$REPRO_BUILD_CACHE_FIRST" \
             "$REPRO_WORKTREE_FIRST/tools/build-release-candidate.sh" --tag "$CI_CANDIDATE_TAG" --candidate

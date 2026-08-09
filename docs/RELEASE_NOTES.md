@@ -1,9 +1,11 @@
 ### v0.6.0 — Durable ten-player sessions
 
+- One universal firmware image for the original M5Stack Cardputer and
+  Cardputer-Adv, with runtime model diagnostics and an unsupported-board stop.
 - Ten authenticated phone players with stable browser identities, reconnect and takeover support, and a six-digit host join code.
 - Cumulative Cardputer session standings, per-game phone scores, versioned microSD history, power-loss recovery, and restore into a fresh lobby.
 - Planned access-point pauses preserve play state and provide a ten-minute return window.
-- Deterministic, checksum-locked builds with validated ESP32-S3 images, release manifests, provenance, and safer idempotent M5Burner publishing.
+- Deterministic, checksum-locked builds with validated ESP32-S3 images, release manifests, provenance, and deterministic packaging.
 - Scrollable host history/events, storage and connection status, diagnostics, generated game/language metadata, and hardened bounded input handling.
 
 ### v0.5.0 — German, top to bottom + settings overhaul
@@ -20,11 +22,17 @@ Fifteen games now.
 
 ### Install
 
-Search for **"Hotspot Arcade"** in the **M5Burner** app or the **M5Launcher** catalog — one tap, no cables.
+Download the reviewed candidate or release artifacts and verify `SHA256SUMS`. The
+same `hotspot-arcade-cardputer.ino.bin` and `hotspot-arcade-cardputer.full.bin`
+support both Cardputer models; there is no separate Advance build. M5Burner catalog
+identity and publication are intentionally deferred during two-device hardware
+qualification.
 
 **Or flash by hand** (keeps M5Launcher):
 ```
 esptool --chip esp32s3 --port <PORT> --baud 921600 write_flash 0x170000 hotspot-arcade-cardputer.ino.bin
 ```
 
-Cardputer v1 (StampS3, 8MB). Full image and recovery are in the README.
+Use the completed [hardware acceptance matrix](HARDWARE_ACCEPTANCE.md) as the release
+gate. Full-image installation, model-specific download-mode steps, and recovery are
+documented in the README.

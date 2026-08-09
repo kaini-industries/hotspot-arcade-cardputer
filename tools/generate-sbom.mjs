@@ -14,7 +14,11 @@ import {
   readUpstreamLock,
   sourceDateEpoch,
 } from './release-provenance.mjs';
-import { validateSbomDocument } from './validate-sbom.mjs';
+import {
+  sbomPatchName,
+  sbomPatchSourceInfo,
+  validateSbomDocument,
+} from './validate-sbom.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const build = resolve(root, process.argv[2] ?? 'build');
@@ -81,7 +85,7 @@ const subtreePackage = (name, localPrefix, upstreamPath, license) => {
 };
 
 const linux = 'linux-x64';
-const dependencies = [
+const fixedPackages = [
   lockedPackage({
     name: 'hotspot-arcade',
     versionInfo: upstream.commit,
@@ -113,13 +117,35 @@ const dependencies = [
     downloadLocation: item.archives[linux].url,
     sha256: item.archives[linux].sha256,
   })),
-  ...toolchain.arduino.libraries.map((item) => lockedPackage({
+];
+const libraryPackages = toolchain.arduino.libraries.map((item) => ({
+  item,
+  package: lockedPackage({
     name: item.name,
     versionInfo: item.version,
     downloadLocation: item.url,
     sha256: item.sha256,
     purpose: 'LIBRARY',
-  })),
+  }),
+}));
+const patchPackages = libraryPackages.flatMap(({ item, package: basePackage }) =>
+  (item.patches ?? []).map((patch, index) => {
+    const packageEntry = lockedPackage({
+      name: sbomPatchName(item, index),
+      versionInfo: patch.upstreamCommit,
+      downloadLocation: `${patch.upstreamRepository}/commit/${patch.upstreamCommit}`,
+      sha256: patch.sha256,
+      purpose: 'SOURCE',
+      license: 'MIT',
+      supplier: 'Organization: M5Stack',
+    });
+    packageEntry.sourceInfo = sbomPatchSourceInfo(item, patch);
+    return { package: packageEntry, basePackage };
+  }));
+const dependencies = [
+  ...fixedPackages,
+  ...libraryPackages.map((item) => item.package),
+  ...patchPackages.map((item) => item.package),
 ];
 
 const namespaceMaterial = [
@@ -168,6 +194,11 @@ const document = {
       spdxElementId: rootId,
       relationshipType: 'DEPENDS_ON',
       relatedSpdxElement: dependency.SPDXID,
+    })),
+    ...patchPackages.map((item) => ({
+      spdxElementId: item.package.SPDXID,
+      relationshipType: 'PATCH_FOR',
+      relatedSpdxElement: item.basePackage.SPDXID,
     })),
     ...files.map((file) => ({
       spdxElementId: rootId,

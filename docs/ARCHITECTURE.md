@@ -12,7 +12,7 @@ flowchart LR
     E -->|"authoritative state"| P
     E -->|"join, leave, score, typed event"| H["32-identity host ledger"]
     H --> S["Locked snapshots"]
-    S --> U["Cardputer UI"]
+    S --> U["Cardputer / Cardputer-Adv UI"]
     S --> R["Recovery coordinator"]
     R --> SD["microSD A/B + immutable history"]
     R --> N["NVS A/B fallback"]
@@ -23,9 +23,18 @@ flowchart LR
 
 ### 1. Runtime and transport
 
-`hotspot-arcade-cardputer.ino`, `ha_network_policy.h`, and `ha_runtime_types.h`
-own the Wi-Fi AP, captive DNS/HTTP server, WebSocket callbacks, client admission,
-rate limits, flow control, and the loop scheduler.
+`hotspot-arcade-cardputer.ino`, `ha_device.h`, `ha_network_policy.h`, and
+`ha_runtime_types.h` own runtime board classification, the Wi-Fi AP, captive
+DNS/HTTP server, WebSocket callbacks, client admission, rate limits, flow control,
+and the loop scheduler.
+
+One compiled image supports two explicit M5Unified identities: `M5Cardputer`
+(numeric board ID 14) and `M5CardputerADV` (numeric board ID 24). The pure
+`ha_device.h` classifier is covered by native tests, while compile-time assertions
+bind those numeric contracts to the locked M5Unified declarations. Startup records
+the detected identity in diagnostics and prints it to serial. Any other identity
+enters the fatal startup screen before network initialization or OTA health
+confirmation; there is no permissive unknown-board fallback.
 
 The allocation-free socket table admits at most ten authenticated players and two
 pending handshakes. Pending sockets have a five-second hello deadline. Twelve
@@ -119,18 +128,19 @@ then operate without the engine lock. In particular, no SD, display, speaker, AP
 DNS, HTTP lifecycle, or blocking persistence work is permitted under the mutex.
 
 The loop performs at most one queued sound request per tick and ends with a one-tick
-yield. Diagnostics expose free/minimum heap, largest block, socket/queue high-water
-marks, rate rejections, coalesces/drops/closes, loop gaps, mutex hold time, SD
-failures, sound drops, and checkpoint generation.
+yield. Diagnostics expose the runtime model and board ID, free/minimum heap, largest
+block, socket/queue high-water marks, rate rejections, coalesces/drops/closes, loop
+gaps, mutex hold time, SD failures, sound drops, and checkpoint generation.
 
 ## Boot and OTA health
 
-Startup allocates the recursive mutex and bounded storage/UI buffers, loads and
-repairs configuration, mounts SD or degrades to NVS, recovers the active session,
-loads content, installs handlers, forces the initial checkpoint, starts AP/DNS/HTTP,
-and draws a healthy screen. Only then does it mark a pending OTA image valid. A fatal
-initialization error displays a failure and deliberately leaves rollback pending; SD
-failure alone is degraded operation rather than a fatal boot.
+Startup first classifies the detected M5 board and refuses unsupported hardware. It
+then allocates the recursive mutex and bounded storage/UI buffers, loads and repairs
+configuration, mounts SD or degrades to NVS, recovers the active session, loads
+content, installs handlers, forces the initial checkpoint, starts AP/DNS/HTTP, and
+draws a healthy screen. Only then does it mark a pending OTA image valid. A fatal
+board or initialization error displays a failure and deliberately leaves rollback
+pending; SD failure alone is degraded operation rather than a fatal boot.
 
 ## Provenance and release boundary
 
@@ -139,9 +149,21 @@ URL and 40-character commit. `UPSTREAM.lock.json` records every file hash and a
 source-tree digest. The downstream build lock records every tool, Arduino dependency,
 archive, and `boot_app0.bin` hash.
 
+The universal image uses the tagged M5GFX 0.2.26 archive plus one exact upstream
+fix hunk from M5GFX PR #233, commit
+`5f8a783f7dbc07e8ce5c19cf8779829d1eefcde1`. This prevents a VAMeter I2C probe from
+overwriting the GPIO result needed to distinguish Cardputer-Adv when G5/G6 are
+pulled high. Bootstrap installs the tagged library, verifies the target preimage,
+applies the staged patch, and verifies the patched result against the lock; it does
+not substitute the full M5GFX development branch. The SPDX document represents the
+reviewed change as a separate MIT-licensed source package with a `PATCH_FOR`
+relationship to M5GFX 0.2.26.
+
 A release candidate is accepted only after native sanitizer tests, simulator tests,
-a clean generated-file check, the firmware budgets, two clean-cache isolated identical builds,
-esptool reconstruction, deterministic M5 packaging, SPDX validation, checksums, and
-provenance verification. Final metadata additionally requires the release tag to
-resolve to the clean packaged commit; M5Burner receives that exact commit as an
-independent publication constraint.
+a clean generated-file check, firmware budgets, two isolated clean-cache builds with
+identical outputs, esptool reconstruction, deterministic packaging, SPDX validation,
+checksums, provenance verification, and the physical matrix for both supported
+devices. Its manifest declares `singleImage: true` and enumerates both runtime board
+IDs. M5Burner catalog identity and publication are deferred from this hardware
+qualification phase; producing the deterministic archive does not publish or prove
+device compatibility.

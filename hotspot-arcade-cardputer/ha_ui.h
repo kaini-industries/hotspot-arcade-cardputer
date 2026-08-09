@@ -588,39 +588,43 @@ static void haUiDrawDiagnostics(lgfx::LovyanGFX* g) {
     haUiHeader(g, "DIAGNOSTICS");
     g->setTextColor(TFT_WHITE, TFT_BLACK);
     char line[48];
+    snprintf(line, sizeof(line), "device %s (board %u)",
+             haDeviceName(d.deviceKind),
+             (unsigned)d.boardId);
+    g->drawString(line, 3, 15);
     snprintf(line, sizeof(line), "heap %lu min %lu block %lu",
              (unsigned long)d.freeHeap,
              (unsigned long)d.minFreeHeap,
              (unsigned long)d.largestFreeBlock);
-    g->drawString(line, 3, 15);
+    g->drawString(line, 3, 27);
     snprintf(line, sizeof(line), "ws %u auth %u pending %u qmax %u",
              (unsigned)d.wsObjects,
              (unsigned)d.wsAuthenticated,
              (unsigned)d.wsPending,
              (unsigned)d.maxSocketQueue);
-    g->drawString(line, 3, 27);
+    g->drawString(line, 3, 39);
     snprintf(line, sizeof(line), "rate ctl %lu draw %lu chat %lu emoji %lu",
              (unsigned long)d.rateRejected[HaInboundGeneral],
              (unsigned long)d.rateRejected[HaInboundDraw],
              (unsigned long)d.rateRejected[HaInboundChat],
              (unsigned long)d.rateRejected[HaInboundEmoji]);
-    g->drawString(line, 3, 39);
+    g->drawString(line, 3, 51);
     snprintf(line, sizeof(line), "flow coalesce %lu drop %lu close %lu",
              (unsigned long)d.outputCoalesced,
              (unsigned long)d.streamDropped,
              (unsigned long)d.overloadCloses);
-    g->drawString(line, 3, 51);
+    g->drawString(line, 3, 63);
     snprintf(line, sizeof(line), "loop %lums lock %luus sound drop %lu",
              (unsigned long)d.maxLoopGapMs,
              (unsigned long)d.maxEngineLockUs,
              (unsigned long)d.soundDropped);
-    g->drawString(line, 3, 63);
+    g->drawString(line, 3, 75);
     snprintf(line, sizeof(line), "SD failures %lu checkpoint %lu",
              (unsigned long)d.sdFailures,
              (unsigned long)d.checkpointGeneration);
-    g->drawString(line, 3, 75);
+    g->drawString(line, 3, 87);
     g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    g->drawString("Values are high-water marks since boot.", 3, 91);
+    g->drawString("High-water marks since boot.", 3, 103);
     haUiFooter(g, "ESC back");
 }
 

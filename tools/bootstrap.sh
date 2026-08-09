@@ -73,5 +73,11 @@ for item in json.load(open(sys.argv[1]))["arduino"]["libraries"]: print("{}@{}".
 )
 "$CLI" --config-file "$CONFIG" lib install --no-deps "${LOCKED_LIBRARIES[@]}"
 
-node tools/verify-toolchain-lock.mjs --target "$TARGET"
+# M5GFX 0.2.26 is the latest registry release, but its Cardputer Advance
+# autodetection overwrites the GPIO probe bits. Apply only the exact upstream
+# fix accepted as M5GFX PR #233; the helper checks the release preimage, stages
+# the result, and accepts an already-patched rerun.
+node tools/arduino-library-patches.mjs
+
+node tools/verify-toolchain-lock.mjs --target "$TARGET" --installed
 echo "locked Arduino toolchain is ready under .cache/arduino"

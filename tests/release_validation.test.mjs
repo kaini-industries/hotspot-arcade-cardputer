@@ -13,6 +13,7 @@ import {
   validateRelease,
 } from '../tools/validate-release.mjs';
 import { readCleanGitSource, verifyFinalTag } from '../tools/release-provenance.mjs';
+import { sbomPatchName, sbomPatchSourceInfo } from '../tools/validate-sbom.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -129,6 +130,21 @@ test('release packaging emits stable checksums and manifest', () => {
   assert.equal(manifest.upstream.repository, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).repository);
   assert.equal(manifest.upstream.sourceTreeSha256, JSON.parse(readFileSync(join(root, 'UPSTREAM.lock.json'))).sourceTreeSha256);
   assert.equal(manifest.fqbn, JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'))).arduino.fqbn);
+  assert.equal(manifest.singleImage, true);
+  assert.deepEqual(manifest.compatibleDevices, [
+    {
+      manufacturer: 'M5Stack',
+      model: 'Cardputer',
+      board: 'M5Cardputer',
+      boardId: 14,
+    },
+    {
+      manufacturer: 'M5Stack',
+      model: 'Cardputer-Adv',
+      board: 'M5CardputerADV',
+      boardId: 24,
+    },
+  ]);
   assert.equal(manifest.installLayouts.app.flashOffset, '0x170000');
   assert.deepEqual(
     manifest.installLayouts.m5burner.components.map((item) => item.flashOffset),
@@ -191,6 +207,28 @@ test('SPDX generation is deterministic at SOURCE_DATE_EPOCH', () => {
   const rootPackage = spdx.packages.find((entry) => entry.name === 'hotspot-arcade-cardputer');
   assert.equal(rootPackage.supplier, 'Organization: Kaini Industries');
   assert.match(rootPackage.packageVerificationCode.packageVerificationCodeValue, /^[0-9a-f]{40}$/);
+
+  const toolchain = JSON.parse(readFileSync(join(root, 'tools', 'toolchain.lock.json'), 'utf8'));
+  const m5gfx = toolchain.arduino.libraries.find((entry) => entry.name === 'M5GFX');
+  assert.ok(m5gfx, 'M5GFX must be locked');
+  assert.equal(m5gfx.patches.length, 1);
+  const patch = m5gfx.patches[0];
+  const patchPackage = spdx.packages.find(
+    (entry) => entry.name === sbomPatchName(m5gfx, 0) && entry.versionInfo === patch.upstreamCommit,
+  );
+  assert.ok(patchPackage, 'reviewed M5GFX patch must be represented in the SBOM');
+  assert.equal(patchPackage.downloadLocation, `${patch.upstreamRepository}/commit/${patch.upstreamCommit}`);
+  assert.equal(patchPackage.checksums[0].checksumValue, patch.sha256);
+  assert.equal(patchPackage.sourceInfo, sbomPatchSourceInfo(m5gfx, patch));
+  const m5gfxPackage = spdx.packages.find(
+    (entry) => entry.name === 'M5GFX' && entry.versionInfo === m5gfx.version,
+  );
+  assert.ok(m5gfxPackage, 'tagged M5GFX package must be represented in the SBOM');
+  assert.ok(spdx.relationships.some(
+    (entry) => entry.spdxElementId === patchPackage.SPDXID &&
+      entry.relationshipType === 'PATCH_FOR' &&
+      entry.relatedSpdxElement === m5gfxPackage.SPDXID,
+  ));
   execFileSync(process.execPath, [join(root, 'tools', 'validate-sbom.mjs'), build], options);
 
   writeFileSync(join(build, 'hotspot-arcade-cardputer.ino.bin'), 'tampered app fixture');
@@ -268,7 +306,8 @@ test('workflows gate publication on isolated reproducibility and verified attest
     assert.doesNotMatch(workflow, /go install/);
   }
   assert.match(release, /\n  workflow_dispatch:\n/);
-  assert.match(release, /default: 0\.6\.0-rc\.1/);
+  assert.match(release, /default: 0\.6\.0-rc\.2/);
+  assert.match(ci, /CI_CANDIDATE_TAG="v\$\(tr -d '\[:space:\]' < VERSION\)-rc\.2"/);
   assert.match(release, /VALIDATE_ARGS\+=\(--candidate\)/);
   assert.match(release, /BUILD_ARGS\+=\(--candidate\)/);
   assert.match(release, /refs\/tags\/\$RELEASE_TAG\^\{commit\}/);

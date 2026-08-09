@@ -6,9 +6,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { M5GFX_CARDPUTER_ADVANCE_PATCH } from './arduino-library-patches.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const data = join(root, '.cache', 'arduino', 'data');
+const data = process.env.ARDUINO_DIRECTORIES_DATA
+  ? resolve(root, process.env.ARDUINO_DIRECTORIES_DATA)
+  : join(root, '.cache', 'arduino', 'data');
 const readJson = (name) => JSON.parse(readFileSync(join(data, name), 'utf8'));
 const libraryIndex = readJson('library_index.json');
 const packageIndex = readJson('package_index.json');
@@ -37,7 +40,7 @@ const libraryPins = [
 const libraries = libraryPins.map(([name, version]) => {
   const entry = libraryIndex.libraries.find((candidate) => candidate.name === name && candidate.version === version);
   if (!entry) throw new Error(`library index does not contain ${name}@${version}`);
-  return {
+  const locked = {
     name,
     version,
     url: entry.url,
@@ -46,6 +49,8 @@ const libraries = libraryPins.map(([name, version]) => {
     sha256: checksum(entry.checksum, `${name}@${version}`),
     dependencies: (entry.dependencies ?? []).map((dependency) => dependency.name).sort(),
   };
+  if (name === 'M5GFX') locked.patches = [{ ...M5GFX_CARDPUTER_ADVANCE_PATCH }];
+  return locked;
 });
 
 const esp32Package = esp32Index.packages.find((entry) => entry.name === 'esp32');
