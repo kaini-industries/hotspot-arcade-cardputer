@@ -117,6 +117,7 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     const metadata = readFileSync(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), 'utf8');
     assert.match(metadata, /HA_GENERATED_LANGUAGES/);
     assert.match(metadata, /\{"de", "Deutsch", "en"\}/);
+    assert.match(metadata, /static_assert\(HA_GAME_FILLBLANK == 17/);
 
     put(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), '// stale\n');
     failure(root, /generated files are stale/, '--check');
@@ -138,6 +139,12 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     failure(root, /reserved raw-string delimiter/);
     put(packPath, validPack);
 
+    put(packPath, `Pack: ${'x'.repeat(64)}\nWord: safe\n`);
+    failure(root, /pack name exceeds the engine's 63-byte limit/);
+    put(packPath, `Pack: Safe\nWord: ${'x'.repeat(256)}\n`);
+    failure(root, /value exceeds the engine's 255-byte limit/);
+    put(packPath, validPack);
+
     put(fillblankPath, 'Pack: Broken\nP: prompt\nA: answer\n');
     failure(root, /exactly one of P, A/);
     put(fillblankPath, 'Pack: Broken\nP: prompt\n---\nP: another\n');
@@ -157,6 +164,11 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify([{ ...webManifest[0], crc: 1 }])}\n`);
     failure(root, /CRC does not match/);
     put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify(webManifest)}\n`);
+    put(
+      join(root, 'vendor', 'web', 'index.html.gz'),
+      gzipSync(Buffer.alloc(72 * 1024), { level: 0 }),
+    );
+    failure(root, /compressed web bundle is .* limit is 73728/);
     put(join(root, 'vendor', 'web', 'index.html.gz'), Buffer.from('not gzip'));
     failure(root, /not valid gzip/);
   } finally {

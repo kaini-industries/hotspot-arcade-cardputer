@@ -18,10 +18,16 @@ static void testClassification() {
 
     static const char* const gameStates[] = {
         "trivia", "duel", "draw", "wyr", "scramble", "react", "gc",
-        "bs", "spectrum", "kmk", "chess"
+        "bs", "spectrum", "kmk", "chess", "secrets", "fillblank",
+        "werewolf", "spyfall", "frankendraw"
     };
     for(const char* type : gameStates)
         assert(haWsClassifyOutput(type, false) == HaWsOutputGameState);
+
+    // Frankendraw art is sent once and the engine advances its per-player sent
+    // marker immediately. It must therefore send or close for resume recovery,
+    // never be silently dropped or replaced under pressure.
+    assert(haWsClassifyOutput("fdart", false) == HaWsOutputControl);
 }
 
 static void testThresholdBoundaries() {

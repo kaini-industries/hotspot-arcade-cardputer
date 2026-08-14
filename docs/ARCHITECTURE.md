@@ -8,7 +8,7 @@ only state clients render.
 ```mermaid
 flowchart LR
     P["Up to 10 phone players"] -->|"HTTP + WebSocket JSON v2"| T["Transport and admission"]
-    T --> E["Protocol-v18 game engine"]
+    T --> E["Protocol-v22 game engine"]
     E -->|"authoritative state"| P
     E -->|"join, leave, score, typed event"| H["32-identity host ledger"]
     H --> S["Locked snapshots"]
@@ -16,7 +16,7 @@ flowchart LR
     S --> R["Recovery coordinator"]
     R --> SD["microSD A/B + immutable history"]
     R --> N["NVS A/B fallback"]
-    C["Generated flash content"] -->|"transactional replacement"| E
+    C["Generated flash content"] -->|"active-game ContentBank transaction"| E
 ```
 
 ## Five modules
@@ -57,22 +57,55 @@ The engine in `vendor/engine/` owns game rules, per-game phone scores, player se
 challenges, matches, timers, and browser protocol v2. It derives a 128-bit stable
 identity from each browser-only resume token and never emits the raw token.
 
+The Cardputer build fixes the engine at exactly ten players and five simultaneous
+matches for every 1v1 implementation: the shared duel games, Pong, Battleship, and
+Chess. Compile-time assertions bind those values to the ten-station softAP limit so
+an upstream default cannot silently change the device contract. The current registry
+contains 20 games with IDs 1 through 20, but consumers treat IDs as sparse keys and
+derive support, labels, and display order from `tools/content-manifest.json` rather
+than from a numeric range.
+
 `ha_host.h` maps the engine's PID-oriented sinks to a 32-entry cumulative identity
 ledger. Each record stores the digest, nickname, avatar, signed saturating session
 score, online/current-PID state, and sparse game-play counts. `ha_event_format.h`
-turns the bounded typed event protocol into the 24-entry scrollable host log.
+turns the bounded typed event protocol into the 24-entry localized, scrollable host
+log. Protocol v22 removes the former generic event and round-result callbacks in
+favor of that semantic sink. The separate host-directed finished-art stream is
+discarded by the Cardputer adapter rather than becoming an alternate history input;
+the corresponding bounded `fdart` WebSocket picture still reaches phones. The typed
+log is also in-memory only and is not part of a checkpoint or archive.
 
 ### 3. Content
 
 `tools/content-manifest.json` is the explicit list of accepted games, locales, packs,
 and web assets. `tools/gen-assets.mjs` validates paths, UTF-8 byte counts, duplicate
 routes, pack syntax, and gzip assets, then creates deterministic flash-resident data
-and UI metadata.
+and UI metadata. The manifest is authoritative for the sparse game registry and for
+the locale fallback graph: both `de` and `pt-br` fall back to `en` when the active
+game has no pack set in the requested language. Locale-specific availability may
+differ, and selection happens once for the whole game; translated and English packs
+are never mixed within one bank. Accordingly, Spectrum's v22 Wild Card pack remains
+English-only rather than being inserted into the German or Portuguese-Brazil banks.
+The generated gzip web payload is capped at 72 KiB total; generation fails above
+that ceiling.
 
-`ha_content.h` replaces content as a transaction: begin staging, load every pack,
-set the pending locale, verify accepted pack/item counts, commit, return the selected
-game to its lobby, broadcast configuration, and emit one authoritative state. Failure
-keeps the prior content and locale live.
+`ha_content.h` loads only the target game's content. At most one typed `ContentBank`
+is live and one replacement bank is staged. A transaction begins with the target
+game and requested locale, selects that game's complete translated pack set or its
+explicit English fallback as a unit, loads packs and items, verifies exact 16-bit
+counts and type-specific bounds, then commits. Packless games use an empty typed
+bank. Commit resets the target game to its lobby, broadcasts the requested locale,
+and emits one authoritative state without exposing an intermediate empty lobby. A
+locale-only reload preserves that game's phone scores; a game change resets them.
+Any allocation, parse, count, or validation failure aborts the staged bank and leaves
+the prior game, bank, locale, round, and scores live.
+
+Content allocations prefer external PSRAM, then make one internal-heap fallback.
+Every content `String` mutation and the final commit are guarded by a 64 KiB internal
+memory reserve so Wi-Fi, AsyncTCP, and direct-draw UI fallback retain working space.
+Game selection remains a Cardputer loop-task operation because it reads flash-backed
+packs; phone game-change proposals are answered `policy_denied` and never mutate the
+active game or bank.
 
 ### 4. Recovery
 
@@ -90,6 +123,11 @@ Archives are immutable `S%08u.ha` records installed through a verified temporary
 file and rename. `index.bin` is a CRC-protected cache that can always be rebuilt by
 scanning archives. Legacy `config.txt`, `current.txt`, and `history.txt` imports are
 idempotent; originals become `.v1.imported` only after verified promotion.
+
+Durable records contain the selected game ID and sparse game-play counters, but not
+engine PIDs, phone scores, current rounds, host-directed finished art, or the typed
+host-event ring. Recovery therefore restores cumulative identity state and loads one
+fresh active-game bank into a new lobby.
 
 ### 5. Host presentation
 
@@ -110,14 +148,22 @@ quorum reconciliation, and live matches. A normal disconnect is narrower:
 
 - The seat and exact game state remain reserved for 120 seconds.
 - Offline players do not satisfy ordinary party quorum and cannot be challenged.
-- An affected 1v1 match or role-critical Draw/Spectrum/KMK round pauses.
+- An affected 1v1 match or role-critical Drawing, Spectrum, KMK, Fill the Blank,
+  Werewolf, Spyfall, or Draw a Monster round pauses.
 - Expiry performs game-specific leave/forfeit exactly once and releases the PID.
 - The host identity/score ledger remains after PID expiry.
 
-AP lifecycle states are `Booting`, `Running`, `ManualOff`, and `ReconnectWait`.
-Rename/off first announces pause and forces a checkpoint. Manual-off is indefinite.
-Restart allows ten minutes for required identities, resumes automatically when they
-return, or accepts host resume/end. A failed rename restores the prior SSID.
+The 120-second rule is only for an unplanned, transient socket disconnect while the
+AP keeps running. AP lifecycle states are `Booting`, `Running`, `ManualOff`, and
+`ReconnectWait`. Rename/off first announces pause and forces a checkpoint. Manual-off
+is indefinite. A planned restart instead gives the captured required identities ten
+minutes to return, resumes automatically when they do, or accepts host resume/end.
+The planned pause freezes the logical and disconnect clocks, so it does not consume
+the ordinary two-minute grace. At actual shutdown, the adapter atomically detaches
+all engine socket ownership, disables new callback admission, clears its bounded
+socket/queue mirrors, and only then starts asynchronous WebSocket/server/AP teardown.
+Delayed disconnect callbacks therefore cannot leak stale online seats into the first
+post-restart snapshot. A failed rename restores the prior SSID.
 
 ## Concurrency and I/O rules
 

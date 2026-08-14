@@ -298,27 +298,7 @@ static bool haHistIdentityValid(const char* identity) {
 }
 
 static bool haHistKnownGame(uint8_t game, bool allowNone) {
-    if(game == HA_GAME_NONE) return allowNone;
-    switch(game) {
-    case HA_GAME_TRIVIA:
-    case HA_GAME_CONNECT4:
-    case HA_GAME_TICTACTOE:
-    case HA_GAME_DOTS:
-    case HA_GAME_DRAW:
-    case HA_GAME_PONG:
-    case HA_GAME_REACT:
-    case HA_GAME_WYR:
-    case HA_GAME_SCRAMBLE:
-    case HA_GAME_REVERSI:
-    case HA_GAME_GUESSCOLOR:
-    case HA_GAME_BATTLESHIP:
-    case HA_GAME_SPECTRUM:
-    case HA_GAME_KMK:
-    case HA_GAME_CHESS:
-        return true;
-    default:
-        return false;
-    }
+    return haHostGameValid(game, allowNone);
 }
 
 static bool haHistRecordValid(const HaHistSession& session) {

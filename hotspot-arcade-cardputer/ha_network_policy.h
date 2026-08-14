@@ -99,6 +99,10 @@ struct HaSocketTable {
     HaSocketSlot slots[HA_WS_OBJECT_LIMIT];
 };
 
+static inline void haSocketReset(HaSocketTable& table) {
+    table = HaSocketTable{};
+}
+
 enum HaSocketAdmission : uint8_t {
     HaSocketAccepted = 0,
     HaSocketDuplicate = 1,
