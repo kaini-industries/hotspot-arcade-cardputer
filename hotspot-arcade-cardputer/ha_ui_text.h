@@ -7,18 +7,24 @@
 // generated English text.
 #pragma once
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 #include "ha_metadata.h"
 
-extern uint8_t haLang;
-
 enum HaUiLocale : uint8_t {
     HaUiEnglish = 0,
     HaUiGerman = 1,
 };
+
+// AsyncTCP can format roster/engine events while loop() changes and persists
+// haLang. Keep that configuration byte loop-owned and publish only this derived,
+// bounded locale to cross-task readers.
+extern std::atomic<uint32_t> haUiLocaleCache;
+static_assert(alignof(std::atomic<uint32_t>) >= alignof(uint32_t),
+              "cross-task locale cache must preserve native alignment");
 
 enum HaUiTextKey : uint8_t {
     HaUiTextNone = 0,
@@ -136,15 +142,15 @@ static constexpr HaUiTextEntry HA_UI_TEXT[HaUiTextCount] = {
     {"None", "Keins"},
     {"JOIN", "CODE"},
     {"SD OK", "SD OK"},
-    {"SD ERR", "SD FEHL"},
-    {"%s  %d on/%d off", "%s  %d da/%d weg"},
+    {"SD ERR", "SD!"},
+    {"%s %d+/%d-", "%s %d+/%d-"},
     {"Game: %s", "Spiel: %s"},
     {"waiting for phones to join...", "warte auf Handys..."},
     {"+%d more", "+%d weitere"},
-    {"G game L board H history D diagnostics", "G Spiel L Rang H Verlauf D Diagnose"},
+    {"G game L board H history D diag", "G Spiel L Rang H Verlauf D Diag"},
     {"GAMES - %s", "SPIELE - %s"},
     {"MOST PLAYED", "MEISTGESPIELT"},
-    {";/. move  S sort  ENTER pick  ESC back", ";/. Wahl S Sort ENTER Start ESC zurueck"},
+    {";/. move S sort ENTER pick ESC", ";/. Wahl S Sort ENTER Start ESC"},
     {"SESSION LEADERBOARD", "SESSION-RANGLISTE"},
     {"no players yet", "noch keine Spieler"},
     {";/. scroll R new session ESC", ";/. scroll R neue Session ESC"},
@@ -153,26 +159,26 @@ static constexpr HaUiTextEntry HA_UI_TEXT[HaUiTextCount] = {
     {"microSD unavailable", "microSD nicht verfuegbar"},
     {"no archived sessions", "keine archivierten Sessions"},
     {"R on the leaderboard starts one", "R in der Rangliste startet eine"},
-    {";/. move ,// page ENTER view ESC", ";/. Wahl ,// Seite ENTER ansehen ESC"},
+    {";/. move ,// page ENTER view ESC", ";/. Wahl ,// Seite ENTER ESC"},
     {"SESSION #%lu", "SESSION #%lu"},
     {";/. scroll Y restore ESC", ";/. scroll Y laden ESC"},
     {";/. scroll ESC (restore offline)", ";/. scroll ESC (Laden nur offline)"},
     {"RESTORE SESSION?", "SESSION LADEN?"},
     {"Session #%lu", "Session #%lu"},
-    {"Current play is archived first.", "Aktuelles Spiel wird erst archiviert."},
-    {"Phones reconnect to restored scores.", "Handys verbinden sich mit alten Punkten."},
+    {"Current play is archived first.", "Aktuelles Spiel zuerst archivieren."},
+    {"Phones reconnect to restored scores.", "Handys laden die alten Punkte."},
     {"Restore failed; active play unchanged.", "Laden fehlgeschlagen; Spiel bleibt."},
     {"Y confirm   ESC cancel", "Y bestaetigen   ESC abbrechen"},
     {"NEW SESSION?", "NEUE SESSION?"},
     {"Archive scores", "Punkte archivieren"},
-    {"Then reset cumulative session scores.", "Dann werden Gesamtpunkte geloescht."},
-    {"No SD: this session cannot be archived.", "Keine SD: Session nicht archivierbar."},
+    {"Then reset cumulative session scores.", "Danach Gesamtpunkte loeschen."},
+    {"No SD: session cannot be archived.", "Keine SD: Archivieren unmoeglich."},
     {"ARCHIVE FAILED", "ARCHIV FEHLGESCHLAGEN"},
     {"Discard scores?", "Punkte verwerfen?"},
-    {"The active session could not be archived.", "Aktive Session nicht archiviert."},
-    {"A second Y permanently discards it.", "Ein zweites Y verwirft sie dauerhaft."},
-    {"Reset failed; active play is unchanged.", "Reset fehlgeschlagen; Spiel bleibt."},
-    {"Y DISCARD   ESC keep session", "Y VERWERFEN   ESC Session behalten"},
+    {"Active session was not archived.", "Aktive Session nicht archiviert."},
+    {"A second Y permanently discards it.", "Nochmal Y verwirft sie dauerhaft."},
+    {"Reset failed; active play unchanged.", "Reset fehlgeschlagen; Spiel bleibt."},
+    {"Y DISCARD   ESC keep session", "Y VERWERFEN   ESC BEHALTEN"},
     {"SETTINGS", "OPTIONEN"},
     {"Language", "Sprache"},
     {"Access Point", "Netzwerk"},
@@ -184,7 +190,7 @@ static constexpr HaUiTextEntry HA_UI_TEXT[HaUiTextCount] = {
     {"on", "an"},
     {"off", "aus"},
     {"GO >", "LOS >"},
-    {";/. move   ,// change   ENTER open   ESC back", ";/. Wahl ,// aendern ENTER oeffnen ESC"},
+    {";/. move ,// change ENTER open ESC", ";/. Wahl ,// Wert ENTER ESC"},
     {"DIAGNOSTICS", "DIAGNOSE"},
     {"device %s (board %u)", "Geraet %s (Board %u)"},
     {"heap %lu min %lu block %lu", "Heap %lu min %lu Block %lu"},
@@ -201,8 +207,8 @@ static constexpr HaUiTextEntry HA_UI_TEXT[HaUiTextCount] = {
     {"AP NAME", "AP-NAME"},
     {"Type a new SSID:", "Neue SSID eingeben:"},
     {"Applying restarts the access point,", "Uebernehmen startet den AP neu,"},
-    {"which drops every connected phone.", "dadurch verlieren Handys die Verbindung."},
-    {"ENTER apply   DEL erase   ESC cancel", "ENTER OK   DEL loeschen   ESC abbrechen"},
+    {"which drops every connected phone.", "Handys verlieren kurz die Verbindung."},
+    {"ENTER apply DEL erase ESC cancel", "ENTER OK DEL loeschen ESC"},
     {"UI memory unavailable", "UI-Speicher nicht verfuegbar"},
     {"JOIN", "DA"},
     {"NAME", "NAME"},
@@ -243,9 +249,25 @@ static inline HaUiLocale haUiLocaleFromCode(const char* code) {
     return code && strcmp(code, "de") == 0 ? HaUiGerman : HaUiEnglish;
 }
 
+static inline HaUiLocale haUiLocaleFromLanguage(uint8_t language) {
+    if(language >= HA_GENERATED_LANGUAGE_COUNT) return HaUiEnglish;
+    return haUiLocaleFromCode(HA_GENERATED_LANGUAGES[language].code);
+}
+
+static inline void haUiSetLocale(HaUiLocale locale) {
+    const uint32_t bounded = locale == HaUiGerman ? (uint32_t)HaUiGerman
+                                                   : (uint32_t)HaUiEnglish;
+    haUiLocaleCache.store(bounded, std::memory_order_relaxed);
+}
+
+static inline void haUiSetLocaleFromLanguage(uint8_t language) {
+    haUiSetLocale(haUiLocaleFromLanguage(language));
+}
+
 static inline HaUiLocale haUiActiveLocale() {
-    if(haLang >= HA_GENERATED_LANGUAGE_COUNT) return HaUiEnglish;
-    return haUiLocaleFromCode(HA_GENERATED_LANGUAGES[haLang].code);
+    return haUiLocaleCache.load(std::memory_order_relaxed) == (uint32_t)HaUiGerman
+               ? HaUiGerman
+               : HaUiEnglish;
 }
 
 static inline const char* haUiTextForLocale(HaUiTextKey key, HaUiLocale locale) {
@@ -280,7 +302,7 @@ static constexpr HaUiGameTranslation HA_UI_GAMES_DE[] = {
     {"connect4", "Vier gewinnt", "Vier in einer Reihe"},
     {"tictactoe", "Tic-Tac-Toe", "Drei in einer Reihe"},
     {"dots", "Kaestchen", "Die meisten Kaestchen schliessen"},
-    {"reversi", "Reversi", "Steine drehen, meiste gewinnt"},
+    {"reversi", "Reversi", "Steine drehen, Mehrheit gewinnt"},
     {"draw", "Malen", "Malen, andere raten"},
     {"pong", "Pong", "Klassisches Paddel-Duell"},
     {"guesscolor", "Farbe raten", "RGB-Farbe treffen"},

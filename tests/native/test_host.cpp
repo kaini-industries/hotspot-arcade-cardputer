@@ -1,4 +1,5 @@
 #include <cassert>
+#include <atomic>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -7,7 +8,7 @@
 #define HA_MAX_PLAYERS 10
 #include "ha_host.h"
 
-uint8_t haLang = 0;
+std::atomic<uint32_t> haUiLocaleCache{(uint32_t)HaUiEnglish};
 
 static void identityFor(uint32_t value, char out[HA_CLIENT_ID_LEN]) {
     int length = std::snprintf(
@@ -102,15 +103,17 @@ static void testEventRingCapacityAndLocalizedPresenceEvents() {
         assert(std::strcmp(haHost.ev[i % HA_EV_MAX], expected) == 0);
     }
 
-    for(size_t i = 0; i < HA_GENERATED_LANGUAGE_COUNT; i++)
-        if(std::strcmp(HA_GENERATED_LANGUAGES[i].code, "de") == 0) haLang = (uint8_t)i;
+    for(size_t i = 0; i < HA_GENERATED_LANGUAGE_COUNT; i++) {
+        if(std::strcmp(HA_GENERATED_LANGUAGES[i].code, "de") == 0)
+            haUiSetLocaleFromLanguage((uint8_t)i);
+    }
     char identity[HA_CLIENT_ID_LEN];
     identityFor(77, identity);
     assert(haHostJoinStable(1, identity, "NOVA", "N"));
     assert(std::strcmp(haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX], "DA NOVA") == 0);
     haHostLeave(1);
     assert(std::strcmp(haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX], "WEG NOVA") == 0);
-    haLang = 0;
+    haUiSetLocale(HaUiEnglish);
 }
 
 int main() {

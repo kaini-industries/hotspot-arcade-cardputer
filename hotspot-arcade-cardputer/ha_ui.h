@@ -820,8 +820,13 @@ static void haUiSettingAdjust(int dir) {
     {
         uint8_t previous = haLang;
         haLang = (uint8_t)((haLang + HA_LANG_COUNT + dir) % HA_LANG_COUNT);
-        if(haCfgSave()) haLangDirty = true;
-        else haLang = previous;
+        if(haCfgSave()) {
+            haUiSetLocaleFromLanguage(haLang);
+            haLangDirty = true;
+        } else {
+            haLang = previous;
+            haUiSetLocaleFromLanguage(haLang);
+        }
         break;
     }
     case 3: // Access Point on/off
@@ -1045,8 +1050,13 @@ static void haUiEnter() {
         {
             uint8_t previous = haLang;
             haLang = (uint8_t)((haLang + 1) % HA_LANG_COUNT);
-            if(haCfgSave()) haLangDirty = true;
-            else haLang = previous;
+            if(haCfgSave()) {
+                haUiSetLocaleFromLanguage(haLang);
+                haLangDirty = true;
+            } else {
+                haLang = previous;
+                haUiSetLocaleFromLanguage(haLang);
+            }
             break;
         }
         case 3: // AP -> toggle

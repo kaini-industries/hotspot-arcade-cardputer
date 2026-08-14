@@ -68,6 +68,7 @@ uint8_t haAudioLevel = 1;
 // Settings screen changes it and sets haLangDirty; loop() then re-streams packs and
 // the host UI resolves German by language code, with English fallback otherwise.
 uint8_t haLang = 0;
+alignas(4) std::atomic<uint32_t> haUiLocaleCache{(uint32_t)HaUiEnglish};
 bool haLangDirty = false;
 static uint8_t haLoadedLang = 0;
 
@@ -572,7 +573,8 @@ void haUartHostEvent(
         text,
         line,
         sizeof(line),
-        haUiActiveLocale());
+        haUiActiveLocale(),
+        game);
     if(disposition == HaHostEventLog) {
         haHostLog(line);
         return;
@@ -1710,6 +1712,7 @@ void setup() {
     strlcpy(apName, savedConfig.ssid, sizeof(apName));
     haAudioLevel = savedConfig.audio;
     haLang = savedConfig.language;
+    haUiSetLocaleFromLanguage(haLang);
 
     bool historyReady = false;
     if(haSdOk) {
@@ -1797,6 +1800,7 @@ void loop() {
         ENGINE_UNLOCK();
         if(!contentReady) {
             haLang = haLoadedLang;
+            haUiSetLocaleFromLanguage(haLang);
             haCfgSave(); // keep persisted settings aligned with the content still live
         }
     }

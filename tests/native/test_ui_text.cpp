@@ -1,12 +1,14 @@
 #include <cassert>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 
 #include "ha_ui_text.h"
 
-uint8_t haLang = 0;
+std::atomic<uint32_t> haUiLocaleCache{(uint32_t)HaUiEnglish};
 
 static bool isAscii(const char* text) {
     if(!text) return false;
@@ -34,24 +36,165 @@ static void testLanguageSelectionAndFallback() {
     assert(german != UINT8_MAX);
     assert(portuguese != UINT8_MAX);
 
-    haLang = german;
+    haUiSetLocaleFromLanguage(german);
     assert(haUiActiveLocale() == HaUiGerman);
     assert(std::strcmp(haUiT(HaUiTextSettingsTitle), "OPTIONEN") == 0);
 
-    haLang = english;
+    haUiSetLocaleFromLanguage(english);
     assert(haUiActiveLocale() == HaUiEnglish);
     assert(std::strcmp(haUiT(HaUiTextSettingsTitle), "SETTINGS") == 0);
 
-    haLang = portuguese;
+    haUiSetLocaleFromLanguage(portuguese);
     assert(haUiActiveLocale() == HaUiEnglish);
     assert(std::strcmp(haUiT(HaUiTextSettingsTitle), "SETTINGS") == 0);
 
-    haLang = UINT8_MAX;
+    haUiSetLocaleFromLanguage(UINT8_MAX);
     assert(haUiActiveLocale() == HaUiEnglish);
     assert(std::strcmp(haUiT(HaUiTextSettingsTitle), "SETTINGS") == 0);
     assert(std::strcmp(
                haUiTextForLocale((HaUiTextKey)UINT8_MAX, HaUiGerman),
                "") == 0);
+}
+
+static size_t glcdWidth(const char* text, unsigned textSize = 1) {
+    return std::strlen(text) * 6U * textSize;
+}
+
+static void expectFits(const char* text, unsigned x, unsigned textSize = 1) {
+    assert(x < 240);
+    if(glcdWidth(text, textSize) > 240U - x) {
+        std::cerr << "text exceeds Cardputer width budget: \"" << text << "\" is "
+                  << glcdWidth(text, textSize) << "px, budget " << 240U - x << "px\n";
+        assert(false);
+    }
+}
+
+static void testPhysicalWidthBudgets() {
+    static constexpr HaUiTextKey FOOTERS[] = {
+        HaUiTextDashboardFooter,
+        HaUiTextGamesFooter,
+        HaUiTextBoardFooterSd,
+        HaUiTextBoardFooterNoSd,
+        HaUiTextHistoryFooter,
+        HaUiTextHistoryDetailFooter,
+        HaUiTextHistoryDetailOfflineFooter,
+        HaUiTextConfirmCancelFooter,
+        HaUiTextDiscardFooter,
+        HaUiTextSettingsFooter,
+        HaUiTextBackFooter,
+        HaUiTextEventLogFooter,
+        HaUiTextSsidFooter,
+    };
+    static constexpr HaUiTextKey HEADERS[] = {
+        HaUiTextSessionLeaderboard,
+        HaUiTextRestoreSessionTitle,
+        HaUiTextNewSessionTitle,
+        HaUiTextArchiveFailedTitle,
+        HaUiTextSettingsTitle,
+        HaUiTextDiagnosticsTitle,
+        HaUiTextEventLogTitle,
+        HaUiTextApNameTitle,
+    };
+    static constexpr HaUiTextKey BODY_X3[] = {
+        HaUiTextWaitingForPhones,
+        HaUiTextMicroSdUnavailable,
+        HaUiTextNoArchivedSessions,
+        HaUiTextHistoryEmptyHint,
+        HaUiTextHighWaterMarks,
+        HaUiTextNothingYet,
+        HaUiTextTypeNewSsid,
+        HaUiTextApplyingRestartsAp,
+        HaUiTextDropsConnectedPhones,
+        HaUiTextMemoryUnavailable,
+    };
+    static constexpr HaUiTextKey BODY_X10[] = {
+        HaUiTextCurrentPlayArchivedFirst,
+        HaUiTextPhonesReconnectScores,
+        HaUiTextRestoreFailed,
+    };
+    static constexpr HaUiTextKey BODY_X12[] = {
+        HaUiTextArchiveScores,
+        HaUiTextResetCumulativeScores,
+        HaUiTextNoSdCannotArchive,
+    };
+    static constexpr HaUiTextKey BODY_X8[] = {
+        HaUiTextActiveCouldNotArchive,
+        HaUiTextSecondYDiscards,
+        HaUiTextResetFailed,
+    };
+    static constexpr HaUiTextKey SETTING_LABELS[] = {
+        HaUiTextSettingLanguage,
+        HaUiTextSettingAccessPoint,
+        HaUiTextSettingEventLog,
+        HaUiTextSettingDiagnostics,
+    };
+
+    for(HaUiLocale locale : {HaUiEnglish, HaUiGerman}) {
+        for(HaUiTextKey key : FOOTERS) expectFits(haUiTextForLocale(key, locale), 3);
+        // The battery begins at x=213 for "100%"; reserve a 3px gap before it.
+        for(HaUiTextKey key : HEADERS)
+            assert(glcdWidth(haUiTextForLocale(key, locale)) <= 207U);
+        for(HaUiTextKey key : BODY_X3) expectFits(haUiTextForLocale(key, locale), 3);
+        for(HaUiTextKey key : BODY_X10) expectFits(haUiTextForLocale(key, locale), 10);
+        for(HaUiTextKey key : BODY_X12) expectFits(haUiTextForLocale(key, locale), 12);
+        for(HaUiTextKey key : BODY_X8) expectFits(haUiTextForLocale(key, locale), 8);
+        for(HaUiTextKey key : SETTING_LABELS)
+            assert(glcdWidth(haUiTextForLocale(key, locale)) <= 84U);
+
+        char formatted[96];
+        std::snprintf(
+            formatted,
+            sizeof(formatted),
+            haUiTextForLocale(HaUiTextPresenceFormat, locale),
+            haUiTextForLocale(HaUiTextStorageSdError, locale),
+            10,
+            22);
+        expectFits(formatted, 132);
+        std::snprintf(
+            formatted,
+            sizeof(formatted),
+            haUiTextForLocale(HaUiTextGamesTitleFormat, locale),
+            haUiTextForLocale(HaUiTextMostPlayed, locale));
+        assert(glcdWidth(formatted) <= 207U);
+        std::snprintf(
+            formatted,
+            sizeof(formatted),
+            haUiTextForLocale(HaUiTextHistoryTitleFormat, locale),
+            (unsigned long)UINT32_MAX);
+        assert(glcdWidth(formatted) <= 207U);
+        std::snprintf(
+            formatted,
+            sizeof(formatted),
+            haUiTextForLocale(HaUiTextSessionTitleFormat, locale),
+            (unsigned long)UINT32_MAX);
+        assert(glcdWidth(formatted) <= 207U);
+        std::snprintf(
+            formatted,
+            sizeof(formatted),
+            haUiTextForLocale(HaUiTextSessionNumberFormat, locale),
+            (unsigned long)UINT32_MAX);
+        expectFits(formatted, 10, 2);
+
+        for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++) {
+            const HaGeneratedGame& game = HA_GENERATED_GAMES[i];
+            const char* label = haUiGameLabelForLocale(game.key, game.label, locale);
+            const char* desc = haUiGameDescForLocale(game.key, game.desc, locale);
+            std::snprintf(formatted, sizeof(formatted), "*%s", label);
+            // Reserve the rightmost 24px used by the 1v1 marker.
+            assert(glcdWidth(formatted, 2) <= 216U);
+            expectFits(desc, 3);
+            std::snprintf(
+                formatted,
+                sizeof(formatted),
+                haUiTextForLocale(HaUiTextGameFormat, locale),
+                label);
+            expectFits(formatted, 3);
+        }
+    }
+
+    const HaUiGameTranslation* reversi = haUiFindGameTranslation("reversi");
+    assert(reversi);
+    assert(std::strcmp(reversi->descDe, "Steine drehen, Mehrheit gewinnt") == 0);
 }
 
 static void testUiKeyCoverageAndFontSafety() {
@@ -94,5 +237,6 @@ int main() {
     testLanguageSelectionAndFallback();
     testUiKeyCoverageAndFontSafety();
     testGeneratedGameCoverageAndFallback();
+    testPhysicalWidthBudgets();
     std::cout << "native host-UI localization tests passed\n";
 }
