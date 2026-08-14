@@ -32,7 +32,7 @@ const archive = (entry, context) => ({
 
 const libraryPins = [
   ['IRremote', '4.7.1'],
-  ['LibSSH-ESP32', '5.8.0'],
+  ['LibSSH-ESP32', '5.9.0'],
   ['M5GFX', '0.2.26'],
   ['M5Unified', '0.2.19'],
   ['M5Cardputer', '1.1.1'],
@@ -139,10 +139,10 @@ const lock = {
       sourceSha256: '125781f36e6a2d08c484524a45f340694675368b5eeead9d0cb21b2034a91d98',
     },
     emscripten: {
-      version: '6.0.2',
+      version: '6.0.6',
       installer: 'emsdk',
-      installerCommit: 'c8f3a11e8813ed68428c750e283fe72a362fab8e',
-      sdkReleaseCommit: '004876f1984e18a9eb0736c5ca417ac86d386fb8',
+      installerCommit: '9981799f744be74ac67b1c1813ff172f63be0630',
+      sdkReleaseCommit: '833aa203ba2283fc2b6adb504a79a3a0d692df81',
     },
     actionlint: {
       version: '1.7.12',
@@ -157,35 +157,35 @@ const lock = {
       },
     },
     syft: {
-      version: '1.50.0',
+      version: '1.51.0',
       archives: {
         'linux-x64': {
-          url: 'https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz',
-          file: 'syft_1.50.0_linux_amd64.tar.gz',
+          url: 'https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz',
+          file: 'syft_1.51.0_linux_amd64.tar.gz',
           member: 'syft',
-          sha256: 'bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788',
+          sha256: '2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f',
         },
       },
     },
     cosign: {
-      version: '3.0.6',
+      version: '3.1.3',
       archives: {
         'linux-x64': {
-          url: 'https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64',
-          file: 'cosign-linux-amd64-3.0.6',
+          url: 'https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64',
+          file: 'cosign-linux-amd64-3.1.3',
           member: 'cosign',
-          sha256: 'c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74',
+          sha256: '4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71',
         },
       },
     },
     githubCli: {
-      version: '2.93.0',
+      version: '2.97.0',
       archives: {
         'linux-x64': {
-          url: 'https://github.com/cli/cli/releases/download/v2.93.0/gh_2.93.0_linux_amd64.tar.gz',
-          file: 'gh_2.93.0_linux_amd64.tar.gz',
-          member: 'gh_2.93.0_linux_amd64/bin/gh',
-          sha256: '02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0',
+          url: 'https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_amd64.tar.gz',
+          file: 'gh_2.97.0_linux_amd64.tar.gz',
+          member: 'gh_2.97.0_linux_amd64/bin/gh',
+          sha256: 'a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112',
         },
       },
     },
@@ -194,8 +194,8 @@ const lock = {
     requirements: 'tools/requirements-release.txt',
     sha256: sha256(readFileSync(join(root, 'tools', 'requirements-release.txt'))),
     packages: [
-      { name: 'requests', version: '2.32.3' },
-      { name: 'charset-normalizer', version: '3.4.9' },
+      { name: 'requests', version: '2.34.2' },
+      { name: 'charset-normalizer', version: '3.5.0' },
       { name: 'idna', version: '3.18' },
       { name: 'urllib3', version: '2.7.0' },
       { name: 'certifi', version: '2026.7.22' },

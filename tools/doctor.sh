@@ -36,7 +36,7 @@ if [[ -n "$CLI" ]]; then
   else
     bad "project-local ESP32 core 3.3.11 is missing"
   fi
-  for spec in 'IRremote 4.7.1' 'LibSSH-ESP32 5.8.0' 'M5GFX 0.2.26' 'M5Unified 0.2.19' 'M5Cardputer 1.1.1'; do
+  for spec in 'IRremote 4.7.1' 'LibSSH-ESP32 5.9.0' 'M5GFX 0.2.26' 'M5Unified 0.2.19' 'M5Cardputer 1.1.1'; do
     name="${spec% *}"; version="${spec##* }"
     if "$CLI" --config-file tools/arduino-cli.yaml lib list 2>/dev/null | grep -F "$name" | grep -Fq "$version"; then
       ok "$name $version"
@@ -62,11 +62,11 @@ fi
 if ! $CI_MODE; then
   EMSCRIPTEN_VERSION_FILE="$ROOT/.tools/emsdk/upstream/emscripten/emscripten-version.txt"
   if [[ -f "$EMSCRIPTEN_VERSION_FILE" ]]; then
-    expect_version emscripten "6.0.2" "$(tr -d '\"[:space:]' < "$EMSCRIPTEN_VERSION_FILE")"
+    expect_version emscripten "6.0.6" "$(tr -d '\"[:space:]' < "$EMSCRIPTEN_VERSION_FILE")"
   elif command -v emcc >/dev/null 2>&1; then
-    expect_version emscripten "6.0.2" "$(emcc --version 2>&1 | awk '/^emcc / {print $NF; exit}')"
+    expect_version emscripten "6.0.6" "$(emcc --version 2>&1 | awk '/^emcc / {print $NF; exit}')"
   else
-    bad "Emscripten 6.0.2 is missing"
+    bad "Emscripten 6.0.6 is missing"
   fi
   if command -v actionlint >/dev/null 2>&1; then
     expect_version actionlint "1.7.12" "$(actionlint -version 2>/dev/null | awk 'NR == 1 {print; exit}')"

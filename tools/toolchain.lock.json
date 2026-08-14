@@ -39,10 +39,10 @@
       "sourceSha256": "125781f36e6a2d08c484524a45f340694675368b5eeead9d0cb21b2034a91d98"
     },
     "emscripten": {
-      "version": "6.0.2",
+      "version": "6.0.6",
       "installer": "emsdk",
-      "installerCommit": "c8f3a11e8813ed68428c750e283fe72a362fab8e",
-      "sdkReleaseCommit": "004876f1984e18a9eb0736c5ca417ac86d386fb8"
+      "installerCommit": "9981799f744be74ac67b1c1813ff172f63be0630",
+      "sdkReleaseCommit": "833aa203ba2283fc2b6adb504a79a3a0d692df81"
     },
     "actionlint": {
       "version": "1.7.12",
@@ -57,50 +57,50 @@
       }
     },
     "syft": {
-      "version": "1.50.0",
+      "version": "1.51.0",
       "archives": {
         "linux-x64": {
-          "url": "https://github.com/anchore/syft/releases/download/v1.50.0/syft_1.50.0_linux_amd64.tar.gz",
-          "file": "syft_1.50.0_linux_amd64.tar.gz",
+          "url": "https://github.com/anchore/syft/releases/download/v1.51.0/syft_1.51.0_linux_amd64.tar.gz",
+          "file": "syft_1.51.0_linux_amd64.tar.gz",
           "member": "syft",
-          "sha256": "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788"
+          "sha256": "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f"
         }
       }
     },
     "cosign": {
-      "version": "3.0.6",
+      "version": "3.1.3",
       "archives": {
         "linux-x64": {
-          "url": "https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-linux-amd64",
-          "file": "cosign-linux-amd64-3.0.6",
+          "url": "https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64",
+          "file": "cosign-linux-amd64-3.1.3",
           "member": "cosign",
-          "sha256": "c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
+          "sha256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
         }
       }
     },
     "githubCli": {
-      "version": "2.93.0",
+      "version": "2.97.0",
       "archives": {
         "linux-x64": {
-          "url": "https://github.com/cli/cli/releases/download/v2.93.0/gh_2.93.0_linux_amd64.tar.gz",
-          "file": "gh_2.93.0_linux_amd64.tar.gz",
-          "member": "gh_2.93.0_linux_amd64/bin/gh",
-          "sha256": "02d1290eba130e0b896f3709ffff22e1c75a51475ddb70476a85abc6b5807af0"
+          "url": "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_linux_amd64.tar.gz",
+          "file": "gh_2.97.0_linux_amd64.tar.gz",
+          "member": "gh_2.97.0_linux_amd64/bin/gh",
+          "sha256": "a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
         }
       }
     }
   },
   "pythonReleaseDependencies": {
     "requirements": "tools/requirements-release.txt",
-    "sha256": "4208be67f426d5f061f11636f4be19872d905f5bb3fdcb83630c8d39820be72e",
+    "sha256": "2fc5c3ecf565e46e627dac320b53a314b2ab6b5abc58f74cac726f7cc76f7b0b",
     "packages": [
       {
         "name": "requests",
-        "version": "2.32.3"
+        "version": "2.34.2"
       },
       {
         "name": "charset-normalizer",
-        "version": "3.4.9"
+        "version": "3.5.0"
       },
       {
         "name": "idna",
@@ -526,11 +526,11 @@
       },
       {
         "name": "LibSSH-ESP32",
-        "version": "5.8.0",
-        "url": "https://downloads.arduino.cc/libraries/github.com/ewpa/LibSSH_ESP32-5.8.0.zip",
-        "file": "LibSSH_ESP32-5.8.0.zip",
-        "size": 606951,
-        "sha256": "f3a7a4b02917dfe0e000b97ebe9beb463c5ce40dff91ab3cd66228dd6d3c19d4",
+        "version": "5.9.0",
+        "url": "https://downloads.arduino.cc/libraries/github.com/ewpa/LibSSH_ESP32-5.9.0.zip",
+        "file": "LibSSH_ESP32-5.9.0.zip",
+        "size": 607418,
+        "sha256": "cc84b4c529e9405503a85e08f0045e0c431eeced3d6f33748d5de3317b970ebd",
         "dependencies": []
       },
       {
@@ -584,8 +584,8 @@
     ]
   },
   "indexDigests": {
-    "arduinoPackagesSha256": "c7f2e229011f59d0a8ecb9119a2b24f39ffe9b8ddc40eaabfe76e680e2102eab",
+    "arduinoPackagesSha256": "e8bcd57f1ce1cd036ede76aa30b3d31d6a87fca91815b897fc5115dd20769197",
     "esp32PackagesSha256": "5ddcbb2904671b63a537c4486ca07d3d456772eeff0553821997c5759789bd52",
-    "librariesSha256": "3f773b8066dd3734fb65f2c0c58209372857dd58a10911719bbea1040a104339"
+    "librariesSha256": "b1a7883e207c00628c3456e0689bd60be05070b62ae83f2973bbee967b8b39a6"
   }
 }

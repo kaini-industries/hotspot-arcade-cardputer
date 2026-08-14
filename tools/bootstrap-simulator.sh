@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the exact Emscripten simulator SDK in a project-local directory. The
-# emsdk installer revision and the release commit behind version 6.0.2 are both
+# emsdk installer revision and release commit behind the locked version are
 # locked; no global shell profile or SDK configuration is changed.
 set -euo pipefail
 

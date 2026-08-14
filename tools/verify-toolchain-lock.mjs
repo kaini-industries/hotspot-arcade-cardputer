@@ -153,7 +153,7 @@ for (const entry of archives) {
 
 // When the optional local simulator SDK is present, bind both the installer and
 // the version-to-release mapping to the reviewed commits in the lock. This
-// catches an updated emsdk checkout silently resolving 6.0.2 differently.
+// catches an updated emsdk checkout silently resolving the locked SDK differently.
 const emsdk = join(root, '.tools', 'emsdk');
 if (existsSync(join(emsdk, '.git'))) {
   const head = readFileSync(join(emsdk, '.git', 'HEAD'), 'utf8').trim();
