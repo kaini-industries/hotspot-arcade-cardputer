@@ -149,9 +149,9 @@ static inline void ha_upper(char* s) {
 #define CH_R_AGREE 11 // draw by agreement
 #define CH_R_LEFT 12 // opponent disconnected
 
-#define TRIVIA_MAX_TOPICS 6
+#define TRIVIA_MAX_TOPICS 8
 #define TRIVIA_MAX_QS 20
-#define PACK_MAX_ITEMS 32 // items in a word/prompt pack (wyr/scramble/draw)
+#define PACK_MAX_ITEMS 48 // items in a word/prompt pack (wyr/scramble/draw)
 #define TRIVIA_QDUR 20 // seconds per question (safety timer)
 #define TRIVIA_COUNTDOWN 3 // seconds after all-ready before the first question
 #define TRIVIA_REVEAL_MS 4000 // pause on the reveal before the next question

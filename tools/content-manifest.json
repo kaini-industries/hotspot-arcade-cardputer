@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "maxPacksPerGame": 6,
+  "maxPacksPerGame": 8,
   "languages": [
     { "code": "en", "label": "English", "root": "vendor/packs/en" },
     { "code": "de", "label": "Deutsch", "root": "vendor/packs/de" },
