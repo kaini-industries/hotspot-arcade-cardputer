@@ -166,4 +166,7 @@ checksums, provenance verification, and the physical matrix for both supported
 devices. Its manifest declares `singleImage: true` and enumerates both runtime board
 IDs. M5Burner catalog identity and publication are deferred from this hardware
 qualification phase; producing the deterministic archive does not publish or prove
-device compatibility.
+device compatibility. Final GitHub publication is independent of that deferral:
+the M5 job is an exact repository-variable opt-in, while candidates never publish.
+An enabled M5 failure leaves the GitHub release in draft form. Enabling the job
+requires a new Kaini-owned firmware ID; the legacy public ID must not be reused.

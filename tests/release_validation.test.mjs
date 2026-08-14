@@ -13,6 +13,7 @@ import {
   validateRelease,
 } from '../tools/validate-release.mjs';
 import { readCleanGitSource, verifyFinalTag } from '../tools/release-provenance.mjs';
+import { resolveM5BurnerPublication } from '../tools/release-policy.mjs';
 import { sbomPatchName, sbomPatchSourceInfo } from '../tools/validate-sbom.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,6 +64,23 @@ test('release candidates require an explicit numbered rc tag for this VERSION', 
       /candidate tag .* must match v0\.6\.0-rc\.<positive integer>/,
     );
   }
+});
+
+test('M5Burner publication is exact opt-in and candidates cannot publish', () => {
+  assert.equal(resolveM5BurnerPublication({ eventName: 'push', setting: '' }), false);
+  assert.equal(resolveM5BurnerPublication({ eventName: 'push', setting: 'false' }), false);
+  assert.equal(resolveM5BurnerPublication({ eventName: 'push', setting: 'true' }), true);
+  for (const setting of ['TRUE', 'yes', '1', ' true', 'true ']) {
+    assert.throws(
+      () => resolveM5BurnerPublication({ eventName: 'push', setting }),
+      /must be unset, "false", or "true"/,
+    );
+  }
+  assert.equal(resolveM5BurnerPublication({ eventName: 'workflow_dispatch', setting: 'true' }), false);
+  assert.throws(
+    () => resolveM5BurnerPublication({ eventName: 'pull_request', setting: 'true' }),
+    /unsupported release event/,
+  );
 });
 
 test('clean source provenance rejects tracked and untracked changes', () => {
@@ -319,11 +337,34 @@ test('workflows gate publication on isolated reproducibility and verified attest
   assert.match(release, /--deny-self-hosted-runners/);
   assert.match(release, /--expected-commit "\$RELEASE_COMMIT"/);
   assert.match(ci, /--tag "\$CI_CANDIDATE_TAG" --candidate/g);
-  for (const job of ['draft-github-release', 'publish-m5burner', 'finalize-github-release']) {
-    const start = release.indexOf(`  ${job}:`);
-    assert.notEqual(start, -1);
-    assert.match(release.slice(start, start + 180), /if: github\.event_name == 'push'/);
-  }
+  const job = (name, next = '') => {
+    const start = release.indexOf(`  ${name}:`);
+    assert.notEqual(start, -1, `${name} job is missing`);
+    const end = next ? release.indexOf(`  ${next}:`, start) : release.length;
+    assert.notEqual(end, -1, `${next} job is missing`);
+    return release.slice(start, end);
+  };
+  const draft = job('draft-github-release', 'publish-m5burner');
+  const m5burner = job('publish-m5burner', 'finalize-github-release');
+  const finalize = job('finalize-github-release');
+  assert.match(draft, /if: github\.event_name == 'push'/);
+  assert.match(release, /M5BURNER_PUBLISH_ENABLED: \$\{\{ vars\.M5BURNER_PUBLISH_ENABLED \}\}/);
+  assert.match(release, /M5BURNER_ENABLED="\$\(node tools\/release-policy\.mjs\)"/);
+  assert.match(release, /m5burner-enabled: \$\{\{ steps\.release-context\.outputs\.m5burner-enabled \}\}/);
+  assert.match(m5burner, /github\.event_name == 'push'/);
+  assert.match(m5burner, /needs\.build\.outputs\.m5burner-enabled == 'true'/);
+  assert.match(m5burner, /needs: \[build, draft-github-release\]/);
+  assert.match(m5burner, /environment: production/);
+  assert.match(m5burner, /permissions:\n\s+contents: read/);
+  assert.match(finalize, /always\(\)/);
+  assert.match(finalize, /needs\.build\.result == 'success'/);
+  assert.match(finalize, /needs\.draft-github-release\.result == 'success'/);
+  assert.match(finalize, /m5burner-enabled == 'false'[\s\S]*publish-m5burner\.result == 'skipped'/);
+  assert.match(finalize, /m5burner-enabled == 'true'[\s\S]*publish-m5burner\.result == 'success'/);
+  assert.match(finalize, /needs: \[build, draft-github-release, publish-m5burner\]/);
+  assert.match(finalize, /environment: production/);
+  assert.match(finalize, /permissions:\n\s+contents: write/);
+  assert.doesNotMatch(finalize, /M5BURNER_(?:USER|PWD)/);
 });
 
 test('CI host tools use reviewed release archives instead of runner globals', () => {
