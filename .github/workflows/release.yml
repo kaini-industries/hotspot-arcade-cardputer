@@ -26,6 +26,7 @@ jobs:
       release-tag: ${{ steps.release-context.outputs.release-tag }}
       candidate: ${{ steps.release-context.outputs.candidate }}
       source-commit: ${{ steps.release-context.outputs.source-commit }}
+      m5burner-enabled: ${{ steps.release-context.outputs.m5burner-enabled }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -43,9 +44,11 @@ jobs:
         id: release-context
         env:
           REQUESTED_CANDIDATE: ${{ inputs.candidate }}
+          M5BURNER_PUBLISH_ENABLED: ${{ vars.M5BURNER_PUBLISH_ENABLED }}
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
           SOURCE_COMMIT="$(git rev-parse --verify "$GITHUB_SHA^{commit}")"
+          M5BURNER_ENABLED="$(node tools/release-policy.mjs)"
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             RELEASE_TAG="$GITHUB_REF_NAME"
             ARTIFACT_NAME="release-$GITHUB_REF_NAME"
@@ -62,6 +65,7 @@ jobs:
             printf 'artifact-name=%s\n' "$ARTIFACT_NAME"
             printf 'candidate=%s\n' "$IS_CANDIDATE"
             printf 'source-commit=%s\n' "$SOURCE_COMMIT"
+            printf 'm5burner-enabled=%s\n' "$M5BURNER_ENABLED"
           } >> "$GITHUB_OUTPUT"
 
       - name: Install hashed Python test dependencies
@@ -261,7 +265,9 @@ jobs:
             build/SHA256SUMS
 
   publish-m5burner:
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push' &&
+      needs.build.outputs.m5burner-enabled == 'true'
     needs: [build, draft-github-release]
     runs-on: ubuntu-24.04
     environment: production
@@ -297,9 +303,24 @@ jobs:
           --expected-commit "$RELEASE_COMMIT" --artifacts-dir build
 
   finalize-github-release:
-    if: github.event_name == 'push'
-    needs: [build, publish-m5burner]
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      needs.build.result == 'success' &&
+      needs.draft-github-release.result == 'success' &&
+      (
+        (
+          needs.build.outputs.m5burner-enabled == 'false' &&
+          needs.publish-m5burner.result == 'skipped'
+        ) ||
+        (
+          needs.build.outputs.m5burner-enabled == 'true' &&
+          needs.publish-m5burner.result == 'success'
+        )
+      )
+    needs: [build, draft-github-release, publish-m5burner]
     runs-on: ubuntu-24.04
+    environment: production
     permissions:
       contents: write
     steps:

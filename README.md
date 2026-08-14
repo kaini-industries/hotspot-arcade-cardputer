@@ -277,9 +277,29 @@ read-only. For the current hardware-support phase:
    release decision.
 
 M5Burner catalog identity and publication remain a separate, explicitly deferred
-cutover. The deterministic M5Burner-format archive may still be built and inspected,
-but do not create a final tag or publish the catalog entry as part of this hardware
-qualification work.
+cutover. The deterministic M5Burner-format archive is still built, attested, and
+attached to a GitHub release, but the release workflow does not contact M5Burner by
+default. A final tag can therefore publish the reviewed GitHub artifacts after all
+other release gates pass without mutating the M5 catalog.
+
+Tag publication uses the repository variable `M5BURNER_PUBLISH_ENABLED` as an exact
+opt-in. Leave it unset (the recommended deferred state) or set it to the literal
+`false` to skip M5Burner. The workflow accepts only unset, `false`, or `true`; a
+different value fails before the draft release is created. Workflow-dispatched
+`-rc.N` candidates are always non-publishing, even if the variable is `true`.
+
+Both final GitHub publication and the optional M5 job declare the `production`
+environment. Protect that environment with required reviewers before cutting a tag.
+When M5Burner is disabled, its job must be skipped before the GitHub draft can be
+finalized. When it is enabled, the GitHub release remains a draft unless M5Burner
+reports successful publication. The finalizer itself has no access to M5 credentials.
+
+Do not enable M5Burner for the existing catalog identity. First obtain a new
+Kaini Industries-owned firmware ID, replace the legacy ID in
+`tools/m5burner_post.py` through a reviewed PR, verify that the public catalog entry
+points to this repository and serves the expected artifact hashes, configure the
+two M5 secrets on the protected `production` environment, and complete a reviewed
+dry run. Only then set `M5BURNER_PUBLISH_ENABLED` to `true`.
 
 ## License and attribution
 
