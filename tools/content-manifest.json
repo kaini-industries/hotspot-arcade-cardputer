@@ -1,27 +1,32 @@
 {
-  "schema": 1,
-  "maxPacksPerGame": 6,
+  "schema": 2,
+  "maxPacksPerGame": 8,
   "languages": [
     { "code": "en", "label": "English", "root": "vendor/packs/en" },
-    { "code": "de", "label": "Deutsch", "root": "vendor/packs/de" },
-    { "code": "pt-br", "label": "Português (Brasil)", "root": "vendor/packs/pt-br" }
+    { "code": "de", "label": "Deutsch", "root": "vendor/packs/de", "fallback": "en" },
+    { "code": "pt-br", "label": "Português (Brasil)", "root": "vendor/packs/pt-br", "fallback": "en" }
   ],
   "games": [
-    { "id": 1, "constant": "HA_GAME_TRIVIA", "key": "trivia", "label": "Trivia", "description": "Quiz, fastest right wins", "duel": false, "packDirectory": "trivia", "requiredKeys": ["Q", "A", "B", "C", "D", "Answer"] },
-    { "id": 8, "constant": "HA_GAME_WYR", "key": "wyr", "label": "Would You Rather", "description": "Group vote, A or B", "duel": false, "packDirectory": "wyr", "requiredKeys": ["A", "B"] },
-    { "id": 9, "constant": "HA_GAME_SCRAMBLE", "key": "scramble", "label": "Word Scramble", "description": "Unscramble the word", "duel": false, "packDirectory": "scramble", "requiredKeys": ["Word"] },
-    { "id": 13, "constant": "HA_GAME_SPECTRUM", "key": "spectrum", "label": "Spectrum", "description": "Give a clue, dial to guess", "duel": false, "packDirectory": "spectrum", "requiredKeys": ["Left", "Right"] },
-    { "id": 14, "constant": "HA_GAME_KMK", "key": "kmk", "label": "Kiss Marry Kill", "description": "Predict a player's picks", "duel": false, "packDirectory": "kmk", "requiredKeys": ["Name"] },
+    { "id": 1, "constant": "HA_GAME_TRIVIA", "key": "trivia", "label": "Trivia", "description": "Quiz, fastest right wins", "duel": false, "packDirectory": "trivia", "requiredKeys": ["Q", "A", "B", "C", "D", "Answer"], "keyByteLimits": { "Q": 199, "A": 199, "B": 199, "C": 199, "D": 199, "Answer": 7 }, "minItemsPerPack": 1, "maxItemsPerPack": 20 },
+    { "id": 8, "constant": "HA_GAME_WYR", "key": "wyr", "label": "Would You Rather", "description": "Group vote, A or B", "duel": false, "packDirectory": "wyr", "requiredKeys": ["A", "B"], "keyByteLimits": { "A": 127, "B": 127 }, "minItemsPerPack": 1, "maxItemsPerPack": 32 },
+    { "id": 9, "constant": "HA_GAME_SCRAMBLE", "key": "scramble", "label": "Word Scramble", "description": "Unscramble the word", "duel": false, "packDirectory": "scramble", "requiredKeys": ["Word"], "keyByteLimits": { "Word": 23 }, "minItemsPerPack": 1, "maxItemsPerPack": 32 },
+    { "id": 13, "constant": "HA_GAME_SPECTRUM", "key": "spectrum", "label": "Spectrum", "description": "Give a clue, dial to guess", "duel": false, "packDirectory": "spectrum", "requiredKeys": ["Left", "Right"], "keyByteLimits": { "Left": 127, "Right": 127 }, "minItemsPerPack": 1, "maxItemsPerPack": 32 },
+    { "id": 14, "constant": "HA_GAME_KMK", "key": "kmk", "label": "Kiss Marry Kill", "description": "Predict a player's picks", "duel": false, "packDirectory": "kmk", "requiredKeys": ["Name"], "keyByteLimits": { "Name": 39 }, "minItemsPerPack": 3, "maxItemsPerPack": 32 },
     { "id": 7, "constant": "HA_GAME_REACT", "key": "react", "label": "Reaction Duel", "description": "Tap on green, fastest wins", "duel": false },
     { "id": 2, "constant": "HA_GAME_CONNECT4", "key": "connect4", "label": "Connect Four", "description": "Four in a row", "duel": true },
     { "id": 3, "constant": "HA_GAME_TICTACTOE", "key": "tictactoe", "label": "Tic-Tac-Toe", "description": "Three in a row", "duel": true },
     { "id": 4, "constant": "HA_GAME_DOTS", "key": "dots", "label": "Dots & Boxes", "description": "Close the most boxes", "duel": true },
     { "id": 10, "constant": "HA_GAME_REVERSI", "key": "reversi", "label": "Reversi", "description": "Flip discs, most wins", "duel": true },
-    { "id": 5, "constant": "HA_GAME_DRAW", "key": "draw", "label": "Drawing", "description": "Draw it, others guess", "duel": false, "packDirectory": "draw", "requiredKeys": ["Word"] },
+    { "id": 5, "constant": "HA_GAME_DRAW", "key": "draw", "label": "Drawing", "description": "Draw it, others guess", "duel": false, "packDirectory": "draw", "requiredKeys": ["Word"], "keyByteLimits": { "Word": 23 }, "minItemsPerPack": 1, "maxItemsPerPack": 32 },
     { "id": 6, "constant": "HA_GAME_PONG", "key": "pong", "label": "Pong", "description": "Classic paddle rally", "duel": true },
     { "id": 11, "constant": "HA_GAME_GUESSCOLOR", "key": "guesscolor", "label": "Guess the Color", "description": "Match the RGB colour", "duel": false },
     { "id": 12, "constant": "HA_GAME_BATTLESHIP", "key": "battleship", "label": "Battleship", "description": "Hide a fleet, sink theirs", "duel": true },
     { "id": 15, "constant": "HA_GAME_CHESS", "key": "chess", "label": "Chess", "description": "1v1, full chess rules", "duel": true },
+    { "id": 16, "constant": "HA_GAME_SECRETS", "key": "secrets", "label": "Secrets", "description": "Secret yes/no vote and prediction", "duel": false, "packDirectory": "secrets", "requiredKeys": ["Q"], "keyByteLimits": { "Q": 159 }, "minItemsPerPack": 1, "maxItemsPerPack": 32 },
+    { "id": 17, "constant": "HA_GAME_FILLBLANK", "key": "fillblank", "label": "Fill the Blank", "description": "Play a card, Czar picks funniest", "duel": false, "packDirectory": "fillblank", "requiredKeys": [], "oneOfKeys": ["P", "A"], "keyByteLimits": { "P": 127, "A": 127 }, "minItemsPerPack": 2, "maxItemsPerPack": 80, "maxPacks": 3, "packKeyLimits": { "P": { "min": 1, "max": 24 }, "A": { "min": 1, "max": 56 } } },
+    { "id": 18, "constant": "HA_GAME_WEREWOLF", "key": "werewolf", "label": "Werewolf", "description": "Hidden roles, night and day", "duel": false },
+    { "id": 19, "constant": "HA_GAME_SPYFALL", "key": "spyfall", "label": "Spyfall", "description": "Find the spy, hide the location", "duel": false, "packDirectory": "spyfall", "requiredKeys": ["Loc", "R"], "keyByteLimits": { "Loc": 63, "R": 63 }, "repeatableKeys": { "R": 6 }, "minItemsPerPack": 1, "maxItemsPerPack": 14, "maxPacks": 3 },
+    { "id": 20, "constant": "HA_GAME_FRANKENDRAW", "key": "frankendraw", "label": "Draw a Monster", "description": "Three artists build each monster", "duel": false },
     { "id": 0, "constant": "HA_GAME_NONE", "key": "none", "label": "None (lobby)", "description": "Just the join lobby", "duel": false }
   ]
 }

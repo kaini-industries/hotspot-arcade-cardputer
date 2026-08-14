@@ -5,25 +5,6 @@
 #include <Arduino.h>
 #include <limits.h>
 
-// Find `"key"` then the following `:` and return a pointer just past the colon
-// (skipping spaces), or nullptr. Only scans the top level well enough for our
-// flat objects (values are strings/ints/arrays we control).
-static inline const char* ha_json_find(const char* s, const char* key) {
-    size_t klen = strlen(key);
-    for(const char* p = s; *p; p++) {
-        if(p[0] != '"') continue;
-        if(strncmp(p + 1, key, klen) == 0 && p[1 + klen] == '"') {
-            const char* q = p + 1 + klen + 1;
-            while(*q == ' ') q++;
-            if(*q != ':') continue;
-            q++;
-            while(*q == ' ') q++;
-            return q;
-        }
-    }
-    return nullptr;
-}
-
 static inline size_t ha_json_utf8_width(const unsigned char* p) {
     unsigned char c = p[0];
     if(c < 0x80) return c >= 0x20 ? 1 : 0;
@@ -60,11 +41,8 @@ static inline bool ha_json_skip_string(const char*& p) {
         if(*p == '\\') {
             p++;
             if(*p == '"' || *p == '\\' || *p == '/' || *p == 'b' || *p == 'f' ||
-               *p == 'n' || *p == 'r' || *p == 't') {
-                p++;
-                continue;
-            }
-            return false; // \u is intentionally unsupported by the tiny field decoder
+               *p == 'n' || *p == 'r' || *p == 't') { p++; continue; }
+            return false;
         }
         size_t width = ha_json_utf8_width((const unsigned char*)p);
         if(width == 0) return false;
@@ -98,21 +76,15 @@ static inline bool ha_json_skip_number(const char*& p) {
     return true;
 }
 
-// Every inbound protocol/content object is intentionally flat. Validate the
-// complete object before field lookup so missing braces, trailing garbage,
-// malformed strings/numbers, nested key smuggling, and partial prefixes cannot
-// be interpreted as an otherwise legitimate intent.
+// Validate a complete, flat object before field lookup. Duplicate keys are
+// intentionally allowed because Spyfall pack records repeat the `r` key.
 static inline bool ha_json_flat_object_valid(const char* json) {
     if(!json) return false;
     const char* p = json;
     ha_json_ws(p);
     if(*p++ != '{') return false;
     ha_json_ws(p);
-    if(*p == '}') {
-        p++;
-        ha_json_ws(p);
-        return *p == '\0';
-    }
+    if(*p == '}') { p++; ha_json_ws(p); return *p == '\0'; }
     for(;;) {
         if(!ha_json_skip_string(p)) return false;
         ha_json_ws(p);
@@ -132,24 +104,47 @@ static inline bool ha_json_flat_object_valid(const char* json) {
             return false;
         }
         ha_json_ws(p);
-        if(*p == ',') {
-            p++;
-            ha_json_ws(p);
-            continue;
-        }
+        if(*p == ',') { p++; ha_json_ws(p); continue; }
         if(*p++ != '}') return false;
         ha_json_ws(p);
         return *p == '\0';
     }
 }
 
-// Read a complete string value for `key`. Truncation, unterminated input,
-// invalid escapes/control bytes, malformed UTF-8, and trailing junk all fail;
-// callers never receive a plausible prefix of attacker-controlled input.
-static inline bool ha_json_str(const char* s, const char* key, char* out, size_t n) {
+// Find `"key"` then the following `:` and return a pointer just past the colon
+// (skipping spaces), or nullptr. Only scans the top level well enough for our
+// flat objects (values are strings/ints/arrays we control).
+// Find the `n`-th (0-based) occurrence of `"key":` and return a pointer just past the
+// colon. Repeats matter because the Flipper's pack streamer emits one JSON pair per
+// "Key: value" line of a content block, so a block that repeats a key (Spyfall's
+// several "R:" role lines) really does arrive as a repeated key in one object.
+static inline const char* ha_json_find_nth(const char* s, const char* key, int n) {
+    size_t klen = strlen(key);
+    for(const char* p = s; *p; p++) {
+        if(p[0] != '"') continue;
+        if(strncmp(p + 1, key, klen) == 0 && p[1 + klen] == '"') {
+            const char* q = p + 1 + klen + 1;
+            while(*q == ' ') q++;
+            if(*q != ':') continue;
+            q++;
+            while(*q == ' ') q++;
+            if(n-- <= 0) return q;
+        }
+    }
+    return nullptr;
+}
+
+static inline const char* ha_json_find(const char* s, const char* key) {
+    return ha_json_find_nth(s, key, 0);
+}
+
+// Read the `nth` (0-based) string value for `key` into out. Same unescaping as
+// ha_json_str; used to walk a content block's repeated keys in file order.
+static inline bool ha_json_str_nth(const char* s, const char* key, int nth, char* out,
+                                   size_t n) {
     if(!out || n == 0) return false;
     out[0] = '\0';
-    const char* q = ha_json_find(s, key);
+    const char* q = ha_json_find_nth(s, key, nth);
     if(!q || *q != '"') return false;
     q++;
     size_t i = 0;
@@ -164,7 +159,7 @@ static inline bool ha_json_str(const char* s, const char* key, char* out, size_t
             else if(c == 'b') c = '\b';
             else if(c == 'f') c = '\f';
             else if(c == '"' || c == '\\' || c == '/') {}
-            else return false;
+            else { out[0] = '\0'; return false; }
             if(i + 1 >= n) { out[0] = '\0'; return false; }
             out[i++] = c;
             q++;
@@ -178,10 +173,15 @@ static inline bool ha_json_str(const char* s, const char* key, char* out, size_t
     }
     if(*q != '"') { out[0] = '\0'; return false; }
     q++;
-    while(*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') q++;
+    ha_json_ws(q);
     if(*q != ',' && *q != '}' && *q != '\0') { out[0] = '\0'; return false; }
     out[i] = '\0';
     return true;
+}
+
+// Read a string value for `key` into out (NUL-terminated, basic \" \\ unescape).
+static inline bool ha_json_str(const char* s, const char* key, char* out, size_t n) {
+    return ha_json_str_nth(s, key, 0, out, n);
 }
 
 // Read an integer value for `key`. Returns false if absent/non-numeric.
@@ -201,7 +201,7 @@ static inline bool ha_json_int(const char* s, const char* key, int* out) {
         if(v > (limit - digit) / 10U) return false;
         v = v * 10U + digit;
     }
-    while(*q == ' ' || *q == '\t' || *q == '\r' || *q == '\n') q++;
+    ha_json_ws(q);
     if(*q != ',' && *q != '}') return false;
     if(neg)
         *out = v == (uint32_t)INT_MAX + 1U ? INT_MIN : -(int)v;

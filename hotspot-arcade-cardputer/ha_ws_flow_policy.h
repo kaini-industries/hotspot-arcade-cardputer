@@ -76,7 +76,8 @@ static inline HaWsOutputClass haWsClassifyOutput(
 
     static const char* const gameStates[] = {
         "trivia", "duel", "draw", "wyr", "scramble", "react", "gc",
-        "bs", "spectrum", "kmk", "chess"
+        "bs", "spectrum", "kmk", "chess", "secrets", "fillblank",
+        "werewolf", "spyfall", "frankendraw"
     };
     for(const char* candidate : gameStates)
         if(strcmp(type, candidate) == 0) return HaWsOutputGameState;

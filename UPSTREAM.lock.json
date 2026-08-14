@@ -1,24 +1,24 @@
 {
   "schema": 1,
   "repository": "https://github.com/kaini-industries/hotspot-arcade",
-  "commit": "aad6e8ffa03a125aa4d6be14030a3f887d5cde05",
-  "describe": "v1.6.0-7-gaad6e8f",
-  "sourceTreeSha256": "48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606",
+  "commit": "b7b4b235ab07ed08c205f4bb451b153d1508bf4d",
+  "describe": "v1.8.0-10-gb7b4b23",
+  "sourceTreeSha256": "1830d3da68294993a6cd34646165f153f1a313eb30a9f0309d0743ae10af9db0",
   "files": [
     {
       "path": "vendor/engine/ha_games.h",
-      "sha256": "519023f015f77341889bacface649c6bf1a110b6741d659b9f4292d35fd6a9f2",
-      "size": 212312
+      "sha256": "8e724397d6f0cc734f2fdffe77f666ed9e4c25c794fa92ab1e650ab9bd26717e",
+      "size": 392460
     },
     {
       "path": "vendor/engine/ha_json.h",
-      "sha256": "d793a1dc71575ef8e138e1667b0521e784f87a5bafca0823b003edfe27bb8ccb",
-      "size": 7589
+      "sha256": "6c09faf52612b2b5f328e917127daef5443b0c75f6a7f2145739d75bc2a74278",
+      "size": 7874
     },
     {
       "path": "vendor/engine/ha_proto.h",
-      "sha256": "a6ac21254b336165c3a6d447e6f5063f5c6dadc07f48da9b300769bd660211e3",
-      "size": 3449
+      "sha256": "5f53cc8ddd22f1a571e0881a0e641029abe61425acccde8ceed835b3b2883f3c",
+      "size": 5333
     },
     {
       "path": "vendor/libs/AsyncTCP/.clang-format",
@@ -441,6 +441,16 @@
       "size": 352
     },
     {
+      "path": "vendor/packs/de/fillblank/1-family.txt",
+      "sha256": "c8eb3aaf356f0b22f3a57fc11b6359fbe6a3da7e5984dcac6362bb1ff01952fe",
+      "size": 3392
+    },
+    {
+      "path": "vendor/packs/de/fillblank/2-spicy.txt",
+      "sha256": "cfed031f6dfafd67b75a6fa8e608ab125b432df8cadde86f0331dae83197e2ec",
+      "size": 3178
+    },
+    {
       "path": "vendor/packs/de/kmk/famous.txt",
       "sha256": "f93d5d362495212ff63e0aeb8dbc63b7accd24bb965fa285243c18e062ae403b",
       "size": 561
@@ -491,6 +501,21 @@
       "size": 383
     },
     {
+      "path": "vendor/packs/de/secrets/1-normal.txt",
+      "sha256": "5fc8504e7ddfa8dbf9cee75713d87b15a4ca7b818922bc5b8b65f3fa259fd026",
+      "size": 770
+    },
+    {
+      "path": "vendor/packs/de/secrets/2-slightly-spicy.txt",
+      "sha256": "c894a995e32514f40fc9a8f04118d4300c6425f29f0b781ef55cab0e6c0956e2",
+      "size": 841
+    },
+    {
+      "path": "vendor/packs/de/secrets/3-super-chili.txt",
+      "sha256": "8868375e15c03ab34522e5fd06d393d593235a343245ffe0def6d8907543ee7c",
+      "size": 835
+    },
+    {
       "path": "vendor/packs/de/spectrum/everyday.txt",
       "sha256": "fd27cc8ac98ea5dc8338917a2c607636809fd4f55ba4d9e07ee615e477c6376b",
       "size": 727
@@ -509,6 +534,21 @@
       "path": "vendor/packs/de/spectrum/tastes.txt",
       "sha256": "81ac1e98e4caa67857e9d0c150805c5923db979489e0c677b16cf5a40cf9aa60",
       "size": 871
+    },
+    {
+      "path": "vendor/packs/de/spyfall/1-everyday.txt",
+      "sha256": "f707f90197b31ffde26c0cbc4744916ebf5c48420a4a2dd455c65849e9a03272",
+      "size": 1549
+    },
+    {
+      "path": "vendor/packs/de/spyfall/2-travel.txt",
+      "sha256": "a11fb54db107a0196941ce151d930ceace0b6e1d7352f062925175512f54b0e3",
+      "size": 1538
+    },
+    {
+      "path": "vendor/packs/de/spyfall/3-backstage.txt",
+      "sha256": "cf70f6b8294bbc691d5bc243c21b6be4be5f80a597fc1a3ba08edb8b9e8b91fc",
+      "size": 1361
     },
     {
       "path": "vendor/packs/de/trivia/games.txt",
@@ -601,6 +641,16 @@
       "size": 360
     },
     {
+      "path": "vendor/packs/en/fillblank/1-family.txt",
+      "sha256": "752ba7d4dbd4c050cbd46a6288248cbd6080f45435a9aa878303e58c084e0c7f",
+      "size": 3100
+    },
+    {
+      "path": "vendor/packs/en/fillblank/2-spicy.txt",
+      "sha256": "095c7066315a186cf17240d7f1f5df8403cc09c33b6c81fcc502bde2c4f03fb5",
+      "size": 2900
+    },
+    {
       "path": "vendor/packs/en/kmk/famous.txt",
       "sha256": "35674bb87cf63ae007a2d397a522fa8bbaf0fa977bbc28293cd180ea8898f5ab",
       "size": 557
@@ -651,6 +701,21 @@
       "size": 361
     },
     {
+      "path": "vendor/packs/en/secrets/1-normal.txt",
+      "sha256": "39446339ae470ee5e54aa110af60eacd3d6283a2dfc3e49d9b20d67e9fc2806a",
+      "size": 684
+    },
+    {
+      "path": "vendor/packs/en/secrets/2-slightly-spicy.txt",
+      "sha256": "6db92b09ab79a8fbdb7b555fa928bb24e0cb1221cef000439189f54626e3bcb3",
+      "size": 652
+    },
+    {
+      "path": "vendor/packs/en/secrets/3-super-chili.txt",
+      "sha256": "8beb8e850cabddfb47ed91ed12a5dc6bffc9d4696160389754ba86d270b556cd",
+      "size": 684
+    },
+    {
       "path": "vendor/packs/en/spectrum/everyday.txt",
       "sha256": "3fc6bead8c747f0cd805b6df174cdd77c6d3aab62e1f628b053d34273eededbe",
       "size": 703
@@ -669,6 +734,26 @@
       "path": "vendor/packs/en/spectrum/tastes.txt",
       "sha256": "c0426c6942288910f8f2d9721741746c852e3ad9df7bb79748d5e98866784a86",
       "size": 769
+    },
+    {
+      "path": "vendor/packs/en/spectrum/wildcard.txt",
+      "sha256": "a78c39496e98cff5266d5b3351e10b4607be12d4cf13a455d0718627c602ae52",
+      "size": 1422
+    },
+    {
+      "path": "vendor/packs/en/spyfall/1-everyday.txt",
+      "sha256": "a4c81b7204c2bab3d07d12a5688df09043acc9eea5cf9be3d0875365f8412924",
+      "size": 1399
+    },
+    {
+      "path": "vendor/packs/en/spyfall/2-travel.txt",
+      "sha256": "c0f3caa8c1f5f096f1fd5237c88ebfc1e561e3e7654515fc02217af4085ef512",
+      "size": 1471
+    },
+    {
+      "path": "vendor/packs/en/spyfall/3-backstage.txt",
+      "sha256": "9ac930f5dcdc8c020f7eb1129a677e713fe5d213f92779acca9fced1165c68cf",
+      "size": 1272
     },
     {
       "path": "vendor/packs/en/trivia/games.txt",
@@ -762,13 +847,13 @@
     },
     {
       "path": "vendor/web/index.html.gz",
-      "sha256": "27286924af5f82b08df7d41ecc66e27ece98c25afc46ebcfc56ea4eb841ec1bb",
-      "size": 44748
+      "sha256": "11dba744987323e32ccad1e1694b05d6700f48cb2b4a261e7e60de229cb525fa",
+      "size": 68137
     },
     {
       "path": "vendor/web/manifest.json",
-      "sha256": "e38d46df93b5ac7be54e02363c97676d1b2e6fc96490c4b0c7e5f725d5bafb3c",
-      "size": 100
+      "sha256": "a160c8ded07c283b64704ff3575cc780aa46f573b34f7d6c3f7c1098a0c6f653",
+      "size": 123
     }
   ]
 }

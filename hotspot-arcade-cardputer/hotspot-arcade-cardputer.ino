@@ -7,10 +7,10 @@
 // with. The web bundle and the content packs are baked into flash by
 // tools/gen-cardputer-assets.mjs instead of being streamed in at session start.
 //
-// The engine (ha_games.h) is untouched. It reports to its host through the same
-// six haUart* sinks; here they write into the on-screen mirror (ha_host.h) rather
-// than framing UART bytes. docs/PROTOCOL.md still describes the message set --
-// this build just delivers it by function call.
+// The engine (ha_games.h) is untouched. Its typed host events and artwork sink are
+// delivered by function call: bounded semantic events update the on-screen mirror
+// (ha_host.h), while host-directed art remains transient instead of being framed
+// over a physical UART. docs/PROTOCOL.md describes that boundary.
 //
 // For education/fun on your own hardware. It runs an OPEN access point and a
 // catch-all captive page; only operate it where that is allowed.
@@ -47,6 +47,7 @@
 #include "ha_config.h"
 #include "ha_ssid_transaction.h"
 #include "ha_content.h"
+#include "ha_content_policy.h"
 #include "ha_async_queue.h"
 #include "ha_device.h"
 #include "ha_diagnostics.h"
@@ -59,6 +60,20 @@
 // 10 is the ESP32-S3 softAP hardware maximum (ESP_WIFI_MAX_CONN_NUM). More phones
 // than this cannot associate no matter what -- the chip, not the code, is the cap.
 #define AP_MAX_CONN 10
+
+static_assert(HA_MAX_PLAYERS == 10, "Cardputer player capacity must remain ten");
+static_assert(AP_MAX_CONN == 10, "Cardputer softAP capacity must remain ten");
+static_assert(HA_WS_AUTH_LIMIT == 10, "authenticated socket capacity must remain ten");
+static_assert(HA_WS_PENDING_LIMIT == 2, "pending socket capacity must remain two");
+static_assert(HA_WS_OBJECT_LIMIT == 12, "WebSocket object capacity must remain twelve");
+static_assert(DUEL_MAX_MATCHES == 5, "duel match capacity must remain five");
+static_assert(PONG_MAX == 5, "Pong match capacity must remain five");
+static_assert(BATTLE_MAX == 5, "Battleship match capacity must remain five");
+static_assert(CHESS_MAX == 5, "Chess match capacity must remain five");
+static_assert(
+    sizeof(FdSheet) * HA_MAX_PLAYERS <=
+        HA_CONTENT_FRANKENDRAW_FALLBACK_BUDGET_BYTES,
+    "Frankendraw fallback exceeds the reserved content-allocation headroom");
 
 // ---- host speaker: short jingles, respecting the audio level set in the UI ----
 // 0 = off, 1 = low, 2 = high. Stored here; the UI settings screen changes it.
@@ -111,6 +126,9 @@ static HaWsFlowState haWsFlow[HA_WS_OBJECT_LIMIT];
 static char apName[33] = "\xF0\x9F\x8E\xAE Hotspot Arcade";
 static char joinCode[7] = ""; // generated once per boot; never persisted or sent to phones
 static bool portalRunning = false;
+// Read and written only under ENGINE_LOCK. This closes the AsyncWebSocket callback
+// admission window between logical suspension and closeAll()/server teardown.
+static bool haTransportAcceptingSockets = false;
 
 static HaApState haApState = HaApBooting;
 static HaApRequiredRoster haApRequiredRoster = {};
@@ -242,6 +260,11 @@ static void haWsFlowEnd(uint32_t wsId) {
     if(flow) *flow = HaWsFlowState{};
 }
 
+static void haWsFlowResetAll() {
+    for(uint8_t i = 0; i < HA_WS_OBJECT_LIMIT; i++)
+        haWsFlow[i] = HaWsFlowState{};
+}
+
 static void haWsCacheState(
     HaWsFlowState& flow,
     HaWsOutputClass outputClass,
@@ -350,6 +373,55 @@ void haWsCloseWs(uint32_t wsId) {
 void haWsBroadcast(const String& msg) {
     for(AsyncWebSocketClient& client : ws.getClients())
         if(client.status() == WS_CONNECTED) haWsSendWs(client.id(), msg);
+}
+
+// A v22 ContentBank is the active game's large typed content allocation. Prefer
+// external PSRAM so Wi-Fi, AsyncTCP, and the 8-bit display fallback retain
+// internal SRAM; boards without usable PSRAM get one guarded ordinary-heap
+// attempt. (Frankendraw's separate bounded stroke store remains engine-owned.)
+// String payloads are allocated by Arduino itself, so the engine consults the
+// conservative mutation guard before every String change and final commit.
+
+void* haContentAlloc(size_t bytes) {
+    if(!bytes) return nullptr;
+    void* memory = heap_caps_malloc(
+        bytes,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if(memory) return memory;
+
+    const uint32_t internalCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    if(!haContentInternalFallbackFits(
+           heap_caps_get_free_size(internalCaps),
+           bytes))
+        return nullptr;
+    memory = heap_caps_malloc(bytes, internalCaps);
+    // The allocator can consume alignment/metadata bytes beyond the request, and
+    // system tasks allocate concurrently. Verify the invariant after the actual
+    // allocation rather than relying on the preflight observation alone.
+    if(memory && !haContentInternalReserveHeld(
+                     heap_caps_get_free_size(internalCaps))) {
+        heap_caps_free(memory);
+        return nullptr;
+    }
+    return memory;
+}
+
+void haContentFree(void* memory) {
+    heap_caps_free(memory);
+}
+
+bool haContentAllocationAllowed() {
+    return haContentMutationGuardHeld(
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
+bool haPhoneGameChangeAllowed(uint8_t fromGame, uint8_t toGame) {
+    (void)fromGame;
+    (void)toGame;
+    // Content selection reads flash-backed packs on the loop task. Until a
+    // bounded cross-task request queue is added, the Cardputer keyboard remains
+    // the only authority allowed to change games.
+    return false;
 }
 
 // Called under ENGINE_LOCK from loop(). A dropped/coalesced authoritative state
@@ -582,6 +654,15 @@ void haUartHostEvent(
     if(disposition == HaHostEventStatus) haHostSetEvent(line);
 }
 
+// The typed host-event sink above is the Cardputer's bounded, localized event
+// surface. Protocol v22 no longer exposes the legacy generic event/result sinks.
+// Phones still receive Frankendraw's bounded `fdart` WebSocket message, while the
+// separate host-directed artwork stream stays transient by local-history policy.
+void haUartArt(uint8_t op, const String& json) {
+    (void)op;
+    (void)json;
+}
+
 // ---------------- HTTP (captive) ----------------
 
 // Serve the baked web bundle for every host/path so the captive portal always
@@ -626,14 +707,22 @@ static void onWsEvent(
     (void)srv;
     if(type == WS_EVT_CONNECT) {
         HaSocketAdmission admission = HaSocketObjectsFull;
+        bool transportAccepting = false;
         ENGINE_LOCK();
-        admission = haSocketConnect(haSockets, client->id(), millis());
-        bool flowReady = admission == HaSocketAccepted && haWsFlowBegin(client->id());
-        if(!flowReady && admission == HaSocketAccepted) {
-            haSocketDisconnect(haSockets, client->id());
-            admission = HaSocketObjectsFull;
+        transportAccepting = haTransportAcceptingSockets;
+        if(transportAccepting) {
+            admission = haSocketConnect(haSockets, client->id(), millis());
+            bool flowReady = admission == HaSocketAccepted && haWsFlowBegin(client->id());
+            if(!flowReady && admission == HaSocketAccepted) {
+                haSocketDisconnect(haSockets, client->id());
+                admission = HaSocketObjectsFull;
+            }
         }
         ENGINE_UNLOCK();
+        if(!transportAccepting) {
+            client->close(1012, "transport paused");
+            return;
+        }
         if(admission != HaSocketAccepted) {
             client->close(1013, admission == HaSocketPendingFull ? "pending full" : "socket full");
             return;
@@ -665,25 +754,39 @@ static void onWsEvent(
             memcpy(buf, data, len);
             buf[len] = '\0';
             uint32_t rawNow = millis();
+            bool transportAccepting = false;
             ENGINE_LOCK();
+            transportAccepting = haTransportAcceptingSockets;
             // Enforce the planned reconnect deadline on the AsyncTCP task before
-            // Engine can accept a late hello and turn a detached seat online. The
-            // loop task completes the AP-state transition on its next tick.
-            if(haApReconnectExpiresBeforeInput(
+            // Engine can accept a late hello and turn a missing expected seat
+            // online. Complete the adapter transition under this same lock so the
+            // loop task cannot attempt a second expiry resume.
+            if(transportAccepting && haApReconnectExpiresBeforeInput(
                    haApState,
                    rawNow,
                    haApReconnectStartedMs,
                    HA_AP_RECONNECT_WINDOW_MS) &&
                !haApReconnectExpiryApplied) {
-                engine.transportResume(rawNow, true);
-                haApReconnectExpiryApplied = true;
+                HaTransportResult result = engine.resumeTransport(rawNow, true);
+                if(result == HA_TRANSPORT_OK) {
+                    haHostLog(haUiT(HaUiTextEventSessionResumed));
+                    haApState = HaApRunning;
+                    haApRequiredClear(haApRequiredRoster);
+                    haApReconnectStartedMs = 0;
+                    haApReconnectExpiryApplied = false;
+                } else {
+                    Serial.printf(
+                        "[ha] deadline transport resume rejected: %u\n",
+                        (unsigned)result);
+                }
             }
             HaSocketSlot* slot = haSocketFind(haSockets, client->id());
             char inputType[16];
             bool haveType = ha_json_str(buf, "t", inputType, sizeof(inputType));
             HaInboundClass inputClass = haInboundClass(haveType ? inputType : nullptr);
-            bool allowed = slot && haInboundAllow(slot->limiter, inputClass, rawNow);
-            if(!allowed && inputClass < HaInboundClassCount &&
+            bool allowed = transportAccepting && slot &&
+                           haInboundAllow(slot->limiter, inputClass, rawNow);
+            if(transportAccepting && !allowed && inputClass < HaInboundClassCount &&
                haDiagnostics.rateRejected[inputClass] != UINT32_MAX)
                 haDiagnostics.rateRejected[inputClass]++;
             if(allowed && !haPersistenceTransaction) {
@@ -691,6 +794,7 @@ static void onWsEvent(
                 if(engine.pidByWs(client->id())) haSocketAuthenticate(haSockets, client->id());
             }
             ENGINE_UNLOCK();
+            if(!transportAccepting) client->close(1012, "transport paused");
         } else if(info->final && info->opcode == WS_TEXT) {
             client->close(1009, "message too large");
         }
@@ -776,6 +880,7 @@ static bool startPortalTransport() {
     portalRunning = true;
 
     ENGINE_LOCK();
+    haTransportAcceptingSockets = true;
     haHost.portalRunning = true;
     haHostLog(haUiT(HaUiTextEventApUp));
     ENGINE_UNLOCK();
@@ -801,12 +906,16 @@ static void haPortalResume(bool expireDetachedNow = false) {
     // game time is still frozen. All-required-ready and explicit host resume use
     // the ordinary path, which starts the normal two-minute grace for anyone the
     // host chose not to wait for.
-    engine.transportResume(now, expireDetachedNow);
-    haHostLog(haUiT(HaUiTextEventSessionResumed));
-    haApState = HaApRunning;
-    haApRequiredClear(haApRequiredRoster);
-    haApReconnectStartedMs = 0;
-    haApReconnectExpiryApplied = false;
+    HaTransportResult result = engine.resumeTransport(now, expireDetachedNow);
+    if(result == HA_TRANSPORT_OK) {
+        haHostLog(haUiT(HaUiTextEventSessionResumed));
+        haApState = HaApRunning;
+        haApRequiredClear(haApRequiredRoster);
+        haApReconnectStartedMs = 0;
+        haApReconnectExpiryApplied = false;
+    } else {
+        Serial.printf("[ha] transport resume rejected: %u\n", (unsigned)result);
+    }
     ENGINE_UNLOCK();
 }
 
@@ -818,18 +927,27 @@ static void haPortalSetState(HaApState state) {
 
 // Freeze engine time and durably checkpoint before touching AP/DNS/server state.
 // If the forced checkpoint fails, the still-live transport is resumed unchanged.
-static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) {
+static bool haPortalPauseAndStop(HaTransportReason reason, const char* reconnectSsid) {
     if(!portalRunning) return true;
+    uint32_t now = millis();
+    const char* nextSsid = reason == HA_TRANSPORT_SSID_CHANGE ? reconnectSsid : "";
+    HaTransportResult pauseResult = HA_TRANSPORT_BAD_ARGUMENT;
     ENGINE_LOCK();
-    haApRequiredCapture(haApRequiredRoster, haHost);
-    engine.announceServerPause(
+    pauseResult = engine.pauseTransport(
         reason,
-        reconnectSsid ? reconnectSsid : apName,
-        HA_AP_RECONNECT_WINDOW_MS);
-    engine.transportPause(millis());
-    haHostLog(haUiT(HaUiTextEventSessionPaused));
-    haPersistenceMarkDirty();
+        nextSsid,
+        HA_AP_RECONNECT_WINDOW_MS,
+        now);
+    if(pauseResult == HA_TRANSPORT_OK || pauseResult == HA_TRANSPORT_ALREADY) {
+        haApRequiredCapture(haApRequiredRoster, haHost);
+        haHostLog(haUiT(HaUiTextEventSessionPaused));
+        haPersistenceMarkDirty();
+    }
     ENGINE_UNLOCK();
+    if(pauseResult != HA_TRANSPORT_OK && pauseResult != HA_TRANSPORT_ALREADY) {
+        Serial.printf("[ha] transport pause rejected: %u\n", (unsigned)pauseResult);
+        return false;
+    }
 
     if(!haPersistenceCheckpoint(true)) {
         Serial.println("[ha] refusing AP change: active checkpoint failed");
@@ -837,7 +955,18 @@ static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) 
         return false;
     }
 
+    uint32_t detachNow = millis();
     ENGINE_LOCK();
+    // closeAll() is asynchronous. Detach Engine ownership first while transport
+    // time is frozen, then clear the adapter's matching socket state so delayed
+    // disconnect callbacks cannot leak a stale online roster across AP restart.
+    engine.detachTransportSockets(detachNow);
+    haTransportAcceptingSockets = false;
+    haSocketReset(haSockets);
+    haWsFlowResetAll();
+    haDiagnostics.wsAuthenticated = 0;
+    haDiagnostics.wsPending = 0;
+    haDiagnostics.wsObjects = 0;
     haHostSuspendConnections();
     haHost.portalRunning = false;
     haHostLog(haUiT(HaUiTextEventApStopped));
@@ -879,12 +1008,16 @@ static void haPortalTick(uint32_t now) {
 // ---------------- host actions (called from the UI, on the loop task) ----------
 
 void haHostSelectGame(uint8_t game) {
+    uint32_t now = millis();
     ENGINE_LOCK();
-    engine.selectGame(game);
-    haHost.activeGame = game;
-    if(game != HA_GAME_NONE) haHostGamePlayed(game);
-    haHostLog(haUiT(HaUiTextEventGameChanged));
-    haPersistenceMarkDirty();
+    if(haContentLoadGame(engine, game, HA_LANG_CODE[haLang], now)) {
+        haHost.activeGame = game;
+        if(game != HA_GAME_NONE) haHostGamePlayed(game);
+        haHostLog(haUiT(HaUiTextEventGameChanged));
+        haPersistenceMarkDirty();
+    } else {
+        haHostLog(haUiT(HaUiTextEventGameLoadFailed));
+    }
     ENGINE_UNLOCK();
 }
 
@@ -901,7 +1034,7 @@ bool haHostResetScores(bool discardOnArchiveFailure) {
 
 void haHostRoundEnd() {
     ENGINE_LOCK();
-    engine.roundEnd();
+    engine.roundEnd(millis());
     haHostLog(haUiT(HaUiTextEventRoundEnded));
     ENGINE_UNLOCK();
 }
@@ -925,7 +1058,15 @@ static bool haPersistSsidConfig(const char* ssid) {
     return saved;
 }
 
-static bool haStartSsidTransport(const char*) {
+static bool haStartSsidTransport(const char* ssid) {
+    bool retargeted = false;
+    ENGINE_LOCK();
+    retargeted = engine.replacePausedTransportSsid(ssid);
+    ENGINE_UNLOCK();
+    if(!retargeted) {
+        Serial.println("[ha] refused AP start with stale reconnect metadata");
+        return false;
+    }
     return haPortalStartReconnect();
 }
 
@@ -943,7 +1084,7 @@ void haHostApplySsid(const char* ssid) {
         return;
     }
     bool wasUp = portalRunning;
-    if(wasUp && !haPortalPauseAndStop("ssid_change", ssid)) return;
+    if(wasUp && !haPortalPauseAndStop(HA_TRANSPORT_SSID_CHANGE, ssid)) return;
 
     HaSsidTransactionResult result = haSsidApplyTransaction(
         apName,
@@ -988,7 +1129,7 @@ void haHostTogglePortal() {
         return;
     }
     if(portalRunning) {
-        if(haPortalPauseAndStop("ap_off", apName)) haPortalSetState(HaApManualOff);
+        if(haPortalPauseAndStop(HA_TRANSPORT_AP_OFF, "")) haPortalSetState(HaApManualOff);
         return;
     }
     if(!haPortalStartReconnect()) {
@@ -1607,12 +1748,28 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     // Disconnects captured before this reset refer only to the discarded Engine
     // roster. Do not replay their earlier raw timestamps into the fresh clock.
     haPersistencePendingDisconnectCount = 0;
-    engine.reset(millis());
-    engine.setLang(HA_LANG_CODE[haLang]);
+    uint32_t now = millis();
+    engine.reset(now);
     haHost = *haPersistenceCandidate;
     haHost.portalRunning = portalRunning;
-    if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
-    if(!portalRunning) engine.transportPause(millis());
+    bool restoredGameReady =
+        haContentLoadGame(engine, haHost.activeGame, HA_LANG_CODE[haLang], now);
+    if(!restoredGameReady) {
+        // The history record itself is already durably restored. Keep that party
+        // usable in a fresh lobby and let the normal checkpoint path record the
+        // downgraded active game instead of exposing a half-loaded content bank.
+        haHost.activeGame = HA_GAME_NONE;
+        (void)haContentLoadGame(engine, HA_GAME_NONE, HA_LANG_CODE[haLang], now);
+    }
+    if(!portalRunning) {
+        HaTransportResult pauseResult = engine.pauseTransport(
+            HA_TRANSPORT_AP_OFF,
+            "",
+            HA_AP_RECONNECT_WINDOW_MS,
+            now);
+        if(pauseResult != HA_TRANSPORT_OK && pauseResult != HA_TRANSPORT_ALREADY)
+            Serial.printf("[ha] restored transport pause rejected: %u\n", (unsigned)pauseResult);
+    }
     // The restored game is a fresh lobby with no suspended engine seats. Any
     // barrier captured for the discarded session is now obsolete.
     haApRequiredClear(haApRequiredRoster);
@@ -1620,7 +1777,8 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     haApReconnectExpiryApplied = false;
     haApState = haApStateAfterHistoryRestore(portalRunning);
     haHostLog(haUiT(HaUiTextEventHistoryRestored));
-    haPersistence.dirty = false;
+    if(!restoredGameReady) haHostLog(haUiT(HaUiTextEventGameLoadFailed));
+    haPersistence.dirty = !restoredGameReady;
     ENGINE_UNLOCK();
     haPersistenceEndTransaction();
     return true;
@@ -1733,14 +1891,21 @@ void setup() {
 
     bool contentReady = false;
     ENGINE_LOCK();
-    engine.reset(millis());
-    contentReady = haContentLoadAll(engine, HA_LANG_CODE[haLang]);
+    uint32_t now = millis();
+    engine.reset(now);
+    contentReady =
+        haContentLoadGame(engine, haHost.activeGame, HA_LANG_CODE[haLang], now);
     if(contentReady) {
-        if(haHost.activeGame != HA_GAME_NONE) engine.selectGame(haHost.activeGame);
         // Setup work and first-start storage I/O are not game time. AP startup
         // resumes this clock only after the AP/DNS/HTTP transport is ready.
-        engine.transportPause(millis());
-        haHostLog(haUiT(HaUiTextEventPacksLoaded));
+        HaTransportResult pauseResult = engine.pauseTransport(
+            HA_TRANSPORT_AP_OFF,
+            "",
+            HA_AP_RECONNECT_WINDOW_MS,
+            now);
+        contentReady = pauseResult == HA_TRANSPORT_OK ||
+                       pauseResult == HA_TRANSPORT_ALREADY;
+        if(contentReady) haHostLog(haUiT(HaUiTextEventPacksLoaded));
     }
     ENGINE_UNLOCK();
     if(!contentReady) haStartupFatal("content packs");
@@ -1778,12 +1943,16 @@ void loop() {
     haUiPumpKeys();
     haSoundPump();
 
-    if(haLangDirty) { // Settings changed the language -> re-stream that language's packs
+    if(haLangDirty) { // Settings changed language -> reload the active game's bank
         haLangDirty = false;
         uint8_t requestedLang = haLang;
         bool contentReady = false;
         ENGINE_LOCK();
-        contentReady = haContentLoadAll(engine, HA_LANG_CODE[requestedLang]);
+        contentReady = haContentLoadGame(
+            engine,
+            haHost.activeGame,
+            HA_LANG_CODE[requestedLang],
+            now);
         if(contentReady) {
             haLoadedLang = requestedLang;
             char event[HA_EV_LEN];

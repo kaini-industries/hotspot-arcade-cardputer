@@ -1,3 +1,32 @@
+### Unreleased — Protocol v22 and twenty games
+
+- Firmware protocol v22 adds Secrets, Fill the Blank, Werewolf, Spyfall, and Draw a
+  Monster for 20 games total. IDs 1-20 are manifest-authoritative protocol keys and
+  are treated as sparse rather than inferred from a numeric range.
+- Compile-time guards preserve exactly ten authenticated phone players and five
+  concurrent matches in every 1v1 game.
+- Only the active game's typed content bank is loaded. Game/locale replacement is
+  count-checked and atomic; a missing `de` or `pt-br` game pack set falls back wholly
+  to `en` without mixing packs or changing the requested phone UI locale. Spectrum's
+  new Wild Card pack remains English-only.
+- Content allocation is PSRAM-first. Internal fallback is preflighted and postchecked
+  to retain 64 KiB, while mutation/commit admission also reserves 32 KiB for
+  Frankendraw's fallback store. The Cardputer remains the game-selection authority;
+  phone game proposals are denied without mutating the active bank.
+- Cumulative Cardputer session standings, per-game phone scores, versioned microSD history, power-loss recovery, and restore into a fresh lobby.
+- Planned access-point pauses preserve play state and provide a separate ten-minute
+  return window without consuming the ordinary two-minute reconnect grace.
+- Protocol v22 replaces generic engine event/result callbacks with typed host events;
+  host-directed finished art remains transient, and the localized 24-entry typed log
+  is not persisted. Its 39-column rows cannot overrun the display or end in a partial
+  UTF-8 code point, and reserved Fill Blank/Spyfall details are translated only in
+  their exact game/event context.
+- Pack generation enforces canonical whitespace/control-byte semantics and
+  manifest-declared per-key UTF-8 ceilings matching every v22 engine input buffer.
+- Generated assets enforce a 72 KiB compressed-web ceiling. The reviewed v22 web
+  bundle is 68,137 compressed bytes; the clean release candidate revalidates that
+  exact payload before packaging.
+
 ### v0.6.0 — Durable ten-player sessions
 
 - One universal firmware image for the original M5Stack Cardputer and

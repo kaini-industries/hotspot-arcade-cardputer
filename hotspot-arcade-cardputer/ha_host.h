@@ -16,6 +16,7 @@
 #include <new>
 #include "ha_metadata.h"
 #include "ha_ui_text.h"
+#include "ha_utf8.h"
 
 #ifndef HA_MAX_PLAYERS
 #define HA_MAX_PLAYERS 10
@@ -25,7 +26,9 @@
 #endif
 
 #define HA_EV_MAX 24 // console scrollback
-#define HA_EV_LEN 44 // fits the 240px screen at the 6px font
+#define HA_EV_LEN 40 // 39 byte/glyph columns fit from x=3 at the 6px font
+static_assert((HA_EV_LEN - 1U) * 6U <= 237U,
+              "event console lines must fit the Cardputer display");
 
 // 128-bit random phone ids are rendered as 32 hexadecimal bytes. Keep the buffer
 // overridable so a generated protocol can raise the bound without editing this file.
@@ -114,7 +117,9 @@ static inline void haHostTouch() {
 static inline void haHostLog(const char* s) {
     if(!haHostStorage) return;
     const char* safe = s ? s : "";
-    strlcpy(haHost.ev[haHost.evTotal % HA_EV_MAX], safe, HA_EV_LEN);
+    char* slot = haHost.ev[haHost.evTotal % HA_EV_MAX];
+    strlcpy(slot, safe, HA_EV_LEN);
+    haUtf8SafeTerminate(slot, HA_EV_LEN);
     haHost.evTotal++;
     haHostTouch();
 }
@@ -435,6 +440,7 @@ static inline void haHostImportSessionGame(uint8_t game) {
 
 static inline void haHostSetEvent(const char* s) {
     strlcpy(haHost.lastEvent, s ? s : "", HA_EV_LEN);
+    haUtf8SafeTerminate(haHost.lastEvent, HA_EV_LEN);
     haHostLog(s);
 }
 

@@ -24,12 +24,16 @@ are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPST
 - Ten authenticated phone players and five concurrent matches in each 1v1 game.
 - One firmware image for the original M5Stack Cardputer and Cardputer-Adv, with
   runtime board identification and refusal on unsupported M5 boards.
-- Browser protocol v2 with stable resume identities, duplicate-tab takeover, and a
-  two-minute transient reconnect grace.
+- Firmware protocol v22 with 20 manifest-declared games, plus browser protocol v2
+  with stable resume identities, duplicate-tab takeover, and a two-minute transient
+  reconnect grace.
 - Open Wi-Fi with a cryptographically generated six-digit party join code.
 - Per-game phone scores and a separate 32-person cumulative Cardputer ledger.
 - Crash-safe active-session recovery, full microSD history, browsing, and restore.
 - Planned AP pause/rename without resetting play, plus a ten-minute return window.
+- Active-game-only transactional content banks with explicit language fallback and
+  PSRAM-first allocation, a hard 64 KiB internal reserve, and another 32 KiB of
+  admission headroom for Frankendraw's bounded fallback store.
 - Bounded socket admission, flow control, rate limits, typed host events, and live
   diagnostics.
 - Reproducible, provenance-locked builds with checksums, SPDX SBOM, attestations,
@@ -46,9 +50,10 @@ M5Unified runtime identities `M5Cardputer` (board ID 14) and `M5CardputerADV`
 (board ID 24), prints and displays the detected model, and stops before OTA health
 confirmation on any other board identity.
 
-The locked universal build uses 1,412,448 bytes of the 3,342,336-byte app
-partition and 58,248 bytes of static DRAM, leaving 1,929,888 bytes of image
-headroom and 269,432 bytes for stack and heap at link time.
+The reviewed v22 universal build uses 1,505,072 bytes of the 3,342,336-byte app
+partition and 60,472 bytes of static DRAM, leaving 1,837,264 bytes of image headroom
+and 267,208 bytes for stack and heap at link time. Runtime heap high-water marks on
+both supported devices remain release-gating measurements in the hardware matrix.
 
 The locked M5GFX 0.2.26 source is amended only by the exact reviewed upstream
 Cardputer-Adv detection fix described under [Developer setup](#developer-setup).
@@ -119,6 +124,11 @@ private data. WPA2 is intentionally deferred.
 | `R` | Archive and start a new cumulative session, with confirmation. |
 | `Esc` | Return toward the dashboard. |
 
+The Cardputer is the game-selection authority. A phone may send the browser's
+legacy game-change proposal, but this downstream adapter answers `policy_denied`
+and does not change the active game. Host selection runs the flash-backed content
+transaction on the loop task before the new game becomes visible.
+
 Changing the SSID or stopping the AP freezes the logical game clock and checkpoints
 the session before transport teardown. Manual AP-off remains paused indefinitely.
 After restart the host waits up to ten minutes for required players, resumes when
@@ -134,8 +144,10 @@ is restored.
 - History records never change. Restoring one archives the current nonempty session,
   creates a new active session with `restored_from`, restores cumulative standings,
   and opens the prior selected game in a fresh lobby.
-- Chat, Draw strokes, transient events, raw resume tokens, and an in-progress round
-  are never persisted.
+- Raw resume tokens, phone scores, in-progress rounds, chat, Draw strokes,
+  host-directed finished artwork, and the 24-entry host event log are never persisted.
+  Protocol v22 removes the former generic event/result callbacks; typed host events
+  alone feed that bounded, localized in-memory log.
 
 With microSD, config and active records alternate between CRC-checked A/B slots and
 history is retained without automatic pruning:
@@ -157,14 +169,27 @@ second explicit discard confirmation is required.
 
 ## Games
 
-The fifteen phone-driven games are Trivia, Would You Rather, Word Scramble,
-Spectrum, Kiss Marry Kill, Reaction Duel, Connect Four, Tic-Tac-Toe, Dots & Boxes,
-Reversi, Draw and Guess, Pong, Guess the Color, Battleship, and Chess. Content and
-phone UI are available in English, German, and the currently supplied Portuguese
-Brazil packs, with per-game English fallback where a translation is absent. The
-Cardputer host interface follows the German setting across its dashboard, menus,
-history, diagnostics, event/status text, and generated game metadata. Other host
-interface languages fall back to English.
+The manifest currently declares 20 phone-driven games: `1` Trivia, `2` Connect
+Four, `3` Tic-Tac-Toe, `4` Dots & Boxes, `5` Drawing, `6` Pong, `7` Reaction Duel,
+`8` Would You Rather, `9` Word Scramble, `10` Reversi, `11` Guess the Color, `12`
+Battleship, `13` Spectrum, `14` Kiss Marry Kill, `15` Chess, `16` Secrets, `17` Fill
+the Blank, `18` Werewolf, `19` Spyfall, and `20` Draw a Monster. Although the
+current assignments span 1 through 20, game IDs are treated as sparse identifiers:
+`tools/content-manifest.json`, not numeric contiguity or display order, is
+authoritative.
+
+Only the active game's typed `ContentBank` is live. A switch stages that game's
+packs, verifies the expected pack and item counts, and atomically commits the game
+and requested locale; failure leaves the previous bank, game, locale, and score
+state live. German (`de`) and Portuguese-Brazil (`pt-br`) explicitly fall back to
+English (`en`) when the selected game has no translated pack set. Fallback is chosen
+once for the whole game, never by mixing translated and English packs; availability
+may therefore differ by locale. Spectrum's v22 Wild Card pack is intentionally
+English-only and is not spliced into the German or Portuguese-Brazil Spectrum banks.
+Packless games commit an empty typed bank, while phones retain the requested UI
+locale. The Cardputer host interface follows the German setting across its dashboard,
+menus, history, diagnostics, event/status text, and generated game metadata. Other
+host-interface languages fall back to English.
 
 ## Developer setup
 
@@ -232,8 +257,9 @@ The implementation has five logical modules:
 2. **Engine and host mirror** — `vendor/engine/`, `ha_host.h`, and
    `ha_event_format.h` own authoritative game state, stable identities, cumulative
    awards, bounded typed events, and UI snapshots.
-3. **Content** — `ha_content.h`, generated metadata/assets, and the explicit content
-   manifest implement transactional locale/game content replacement.
+3. **Content** — `ha_content.h`, `ha_content_policy.h`, generated metadata/assets,
+   and the explicit content manifest implement host-authoritative, active-game-only
+   transactional replacement, allocation guards, and manifest-declared fallback.
 4. **Recovery** — `ha_config.h`, `ha_active_nvs.h`, and `ha_history.h` implement
    redundant SD/NVS records, migration, immutable archives, and restore.
 5. **Host presentation** — `ha_ui.h`, `ha_diagnostics.h`, and `ha_async_queue.h`
@@ -254,7 +280,7 @@ Caramanico's original project so selected changes can still be proposed upstream
 ```sh
 node tools/sync-upstream.mjs \
   --repo ../hotspot-arcade \
-  --commit aad6e8ffa03a125aa4d6be14030a3f887d5cde05
+  --commit b7b4b235ab07ed08c205f4bb451b153d1508bf4d
 node tools/gen-assets.mjs
 ```
 

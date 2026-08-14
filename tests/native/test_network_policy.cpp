@@ -68,6 +68,11 @@ static void testSocketAdmissionAndDeadline() {
     assert(haSocketConnect(table, 99, 300) == HaSocketObjectsFull);
     haSocketDisconnect(table, 7);
     assert(haSocketConnect(table, 99, 400) == HaSocketAccepted);
+    haSocketReset(table);
+    assert(haSocketCount(table, true) == 0);
+    assert(haSocketCount(table, false) == 0);
+    assert(haSocketFind(table, 99) == nullptr);
+    assert(haSocketConnect(table, 100, 500) == HaSocketAccepted);
 
     HaSocketTable wrap = {};
     assert(haSocketConnect(wrap, 5, UINT32_MAX - 1000) == HaSocketAccepted);

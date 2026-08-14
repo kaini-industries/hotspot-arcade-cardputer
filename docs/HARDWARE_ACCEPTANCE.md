@@ -26,6 +26,7 @@ required row blocks release. Keep serial logs from boot through each fault test.
 | App-image SHA-256 | |
 | Full-image SHA-256 | |
 | Manifest SHA-256 | |
+| Compressed web bundle bytes | |
 | Original Cardputer serial / revision | |
 | Cardputer-Adv serial / revision | |
 | microSD make / size / filesystem | |
@@ -57,6 +58,8 @@ Complete these once for the exact files used on both devices.
 | Compare device inputs | Both devices use the exact same app-image hash, and both use the exact same full-image hash. | | |
 | Validate SPDX SBOM | M5GFX 0.2.26 and the reviewed `5f8a783…` patch are separate packages joined by `PATCH_FOR`. | | |
 | Validate ESP metadata | Chip, partition offsets, filenames, trimmed full-image boundary, and declared 8 MiB flash layout pass the locked release validator. | | |
+| Validate web payload budget | Manifested gzip assets total no more than 72 KiB (73,728 bytes); record the exact candidate value above. | | |
+| Validate runtime capacities | Cardputer compile-time contracts are exactly 10 players and 5 concurrent matches for every 1v1 engine. | | |
 | Confirm clean provenance | Manifest commit matches the reviewed clean source commit and CI attestation. | | |
 
 ## 2. Installation and runtime identity
@@ -131,8 +134,11 @@ phones where practical.
 | Offline players cannot be challenged and do not satisfy ordinary quorum | | | |
 | Affected 1v1/critical rounds pause during reconnect grace and resolve once | | | |
 | Phone score resets per selected game; host score remains cumulative | | | |
-| All 15 games open and accept a minimal valid round/action | | | |
-| Five concurrent slots work in Pong, Battleship, and Chess | | | |
+| Manifest exposes exactly 20 supported games with IDs 1-20; picker order and labels match it without assuming contiguous IDs | | | |
+| All 20 games open and accept a minimal valid round/action | | | |
+| Five concurrent matches work in Connect Four, Tic-Tac-Toe, Dots & Boxes, Reversi, Pong, Battleship, and Chess; the 10-player cap leaves no sixth pair | | | |
+| A phone `proposeGame` receives `policy_denied` and cannot change the active game or content bank | | | |
+| Cardputer game selection atomically loads the target bank before clients see the new lobby | | | |
 | Malformed numeric/Draw input is rejected without crash or invalid relay | | | |
 | Chat, emoji, Draw, and general-control rate limits increment diagnostics | | | |
 | Slow-client pressure coalesces/drops/closes only the affected client, which can resume | | | |
@@ -145,10 +151,11 @@ phones where practical.
 | Successful rename retains exact engine state, roster, and cumulative scores | | | |
 | Failed rename returns to the prior SSID without losing state | | | |
 | Manual AP off remains paused indefinitely | | | |
-| AP restart gives required identities a ten-minute reconnect window | | | |
+| AP restart gives required identities a ten-minute planned reconnect window, distinct from the ordinary two-minute socket grace | | | |
 | Session resumes automatically when all required identities return | | | |
 | Host can resume/end early when required identities do not return | | | |
 | Logical game and disconnect clocks do not advance while AP is deliberately off | | | |
+| First restart snapshot has no stale online seats; delayed old-socket disconnect callbacks do not alter returned seats | | | |
 | Ten-minute expiry resolves missing participants exactly once | | | |
 | Connected and resumed clients receive the active locale after restart | | | |
 
@@ -175,17 +182,23 @@ card containing unrelated data.
 | Restore archives current nonempty play, creates `restored_from`, restores cumulative standings, and opens a fresh lobby | | | |
 | Legacy `config.txt`, `current.txt`, and `history.txt` migrate once and preserve `.v1.imported` originals | | | |
 | Equal-generation SD/NVS conflict chooses SD; otherwise highest valid generation wins | | | |
-| Chat, Draw strokes, raw resume tokens, and transient events are absent from persisted records | | | |
+| Chat, Draw strokes, raw resume tokens, host-directed finished art, and the typed host-event ring are absent from persisted records | | | |
 
 ## 7. Locale and repeated-use reliability
 
 | Check | Original Cardputer | Cardputer-Adv | Evidence / notes |
 | --- | --- | --- | --- |
-| English, German, and supplied Portuguese-Brazil content load with expected fallback | | | |
+| English, German, and supplied Portuguese-Brazil content load for the active game only | | | |
+| A missing `de` game pack set falls back wholly to `en` while phone UI remains `de`; no mixed-language bank is loaded | | | |
+| A missing `pt-br` game pack set falls back wholly to `en` while phone UI remains `pt-br`; no mixed-language bank is loaded | | | |
+| Spectrum Wild Card appears in the English bank only and is not mixed into German or Portuguese-Brazil Spectrum | | | |
 | Existing and resumed phones receive every locale change | | | |
 | German localizes every host menu, history/restore/diagnostics screen, game label, and status message; Portuguese host text falls back to English | | | |
-| All 24 event-log entries remain scrollable in both English and German; ASCII German spellings render without missing glyphs | | | |
-| Changing locale ends only the current round and preserves per-game/cumulative score contracts | | | |
+| All 24 event-log entries remain scrollable in both English and German; each row stays within 39 columns and UTF-8 truncation never draws a partial glyph | | | |
+| Changing locale transactionally replaces only the active bank, returns that game to its lobby, and preserves per-game/cumulative score contracts | | | |
+| Injected content allocation/parse/count failure leaves the previous game, bank, locale, round, and scores live | | | |
+| Content allocation prefers PSRAM; internal fallback is rejected unless the requested bytes leave 64 KiB free, verified again after allocation | | | |
+| Content creation/mutation/commit requires 96 KiB free: 64 KiB runtime reserve plus 32 KiB Frankendraw fallback headroom | | | |
 | 500 language/game cycles complete | | | |
 | Post-warm-up heap degradation after 500 cycles is under 5% | | | |
 
@@ -214,6 +227,8 @@ summary.
 | Startup free heap | At least 200 KiB | | |
 | Minimum free heap during soak | At least 120 KiB | | |
 | Minimum largest free block | At least 32 KiB | | |
+| Internal free memory at each content mutation/commit admission guard | At least 96 KiB | | |
+| Internal free memory after an ordinary-heap content-bank allocation | At least 64 KiB | | |
 | Normal engine-lock hold | Under 10 ms | | |
 | Loop gap outside forced persistence | Under 50 ms | | |
 | Crash, reset, watchdog, corrupt state, or cross-client eviction | None | | |

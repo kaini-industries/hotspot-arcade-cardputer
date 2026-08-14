@@ -106,6 +106,7 @@ enum HaUiTextKey : uint8_t {
     HaUiTextEventSessionPaused,
     HaUiTextEventApStopped,
     HaUiTextEventGameChanged,
+    HaUiTextEventGameLoadFailed,
     HaUiTextEventRoundEnded,
     HaUiTextEventResumeApBeforeRename,
     HaUiTextEventArchiveUnavailable,
@@ -218,6 +219,7 @@ static constexpr HaUiTextEntry HA_UI_TEXT[HaUiTextCount] = {
     {"session paused", "Session pausiert"},
     {"AP stopped", "AP aus"},
     {"game changed", "Spiel gewechselt"},
+    {"game content load failed", "Spielinhalt nicht geladen"},
     {"round ended", "Runde beendet"},
     {"resume AP before SSID rename", "AP vor SSID-Aenderung starten"},
     {"archive unavailable", "Archiv nicht verfuegbar"},
@@ -308,6 +310,11 @@ static constexpr HaUiGameTranslation HA_UI_GAMES_DE[] = {
     {"guesscolor", "Farbe raten", "RGB-Farbe treffen"},
     {"battleship", "Schiffe versenken", "Flotte verstecken und versenken"},
     {"chess", "Schach", "1v1, volle Schachregeln"},
+    {"secrets", "Geheimnisse", "Geheime Ja/Nein-Wahl vorhersagen"},
+    {"fillblank", "Luecke fuellen", "Karte spielen, Jury waehlt lustigste"},
+    {"werewolf", "Werwolf", "Geheime Rollen bei Nacht und Tag"},
+    {"spyfall", "Spyfall", "Spion finden, Ort geheim halten"},
+    {"frankendraw", "Monster malen", "Drei zeichnen gemeinsam ein Monster"},
     {"none", "Keins (Lobby)", "Nur die Lobby"},
 };
 

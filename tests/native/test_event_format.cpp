@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #include "ha_event_format.h"
 
@@ -113,6 +114,18 @@ int main() {
         "Malen",
         "guessed",
         "Malen: NOVA besiegt ORBIT (erraten)");
+    expectGerman(
+        HA_HOST_EVT_ROUND_WIN,
+        HA_GAME_FILLBLANK,
+        "Luecke fuellen",
+        "picked",
+        "Luecke fuellen: NOVA besiegt ORBIT (ausgewaehlt)");
+    expectGerman(
+        HA_HOST_EVT_ROLE,
+        HA_GAME_SPYFALL,
+        "Spyfall",
+        "missed accusation",
+        "Spyfall: NOVA falsche Beschuldigung");
 
     struct ChessReasonCase {
         uint8_t kind;
@@ -170,6 +183,19 @@ int main() {
         "NOVA: mate",
         HaHostEventLog);
     expectGerman(
+        HA_HOST_EVT_CHAT,
+        HA_GAME_FILLBLANK,
+        "Luecke fuellen",
+        "picked",
+        "NOVA: picked",
+        HaHostEventLog);
+    expectGerman(
+        HA_HOST_EVT_ROLE,
+        HA_GAME_FILLBLANK,
+        "Luecke fuellen",
+        "missed accusation",
+        "Luecke fuellen: NOVA missed accusation");
+    expectGerman(
         HA_HOST_EVT_ROUND_WIN,
         HA_GAME_CHESS,
         "Schach",
@@ -187,6 +213,38 @@ int main() {
                tiny,
                sizeof(tiny)) == HaHostEventLog);
     assert(tiny[sizeof(tiny) - 1] == '\0');
+
+    // Dynamic names/details can consume the whole event row. If snprintf lands
+    // between a UTF-8 lead byte and its continuation, the formatter backs up to
+    // the last complete glyph instead of sending an invalid display string.
+    constexpr size_t EventCapacity = 40;
+    char bounded[EventCapacity];
+    const std::string longName = std::string(35, 'N') + "\xC3\xA9";
+    assert(haFormatHostEvent(
+               HA_HOST_EVT_ROLE,
+               "G",
+               longName.c_str(),
+               "?",
+               0,
+               "role",
+               bounded,
+               sizeof(bounded)) == HaHostEventStatus);
+    assert(std::strcmp(bounded, (std::string("G: ") + std::string(35, 'N')).c_str()) == 0);
+
+    const std::string detail = std::string("x\xC3\xA9") + std::string(80, 'd');
+    assert(haFormatHostEvent(
+               HA_HOST_EVT_ROLE,
+               "G",
+               std::string(33, 'N').c_str(),
+               "?",
+               0,
+               detail.c_str(),
+               bounded,
+               sizeof(bounded)) == HaHostEventStatus);
+    assert(std::strcmp(
+               bounded,
+               (std::string("G: ") + std::string(33, 'N') + " x").c_str()) == 0);
+
     tiny[0] = 'x';
     assert(haFormatHostEvent(255, "G", "A", "B", 0, "", tiny, sizeof(tiny)) ==
            HaHostEventIgnored);

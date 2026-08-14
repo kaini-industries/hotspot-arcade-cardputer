@@ -8,6 +8,7 @@
 
 #include "ha_proto.h"
 #include "ha_ui_text.h"
+#include "ha_utf8.h"
 
 enum HaHostEventDisposition : uint8_t {
     HaHostEventIgnored = 0,
@@ -37,6 +38,12 @@ static inline const char* haLocalizeHostEventDetail(
         return "waehlt";
     if(kind == HA_HOST_EVT_ROUND_WIN && game == HA_GAME_DRAW && strcmp(safe, "guessed") == 0)
         return "erraten";
+    if(kind == HA_HOST_EVT_ROUND_WIN && game == HA_GAME_FILLBLANK &&
+       strcmp(safe, "picked") == 0)
+        return "ausgewaehlt";
+    if(kind == HA_HOST_EVT_ROLE && game == HA_GAME_SPYFALL &&
+       strcmp(safe, "missed accusation") == 0)
+        return "falsche Beschuldigung";
 
     if((kind == HA_HOST_EVT_ROUND_WIN || kind == HA_HOST_EVT_ROUND_DRAW) &&
        game == HA_GAME_CHESS) {
@@ -157,6 +164,6 @@ static inline HaHostEventDisposition haFormatHostEvent(
     default:
         return HaHostEventIgnored;
     }
-    output[capacity - 1] = '\0';
+    haUtf8SafeTerminate(output, capacity);
     return disposition;
 }

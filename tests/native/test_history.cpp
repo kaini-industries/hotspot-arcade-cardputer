@@ -66,6 +66,47 @@ static bool acceptRestore(const HaHistSession& session) {
     return session.archived && session.num != 0;
 }
 
+static void testKnownGameValidation() {
+    static constexpr uint8_t KNOWN_GAMES[] = {
+        HA_GAME_TRIVIA,
+        HA_GAME_CONNECT4,
+        HA_GAME_TICTACTOE,
+        HA_GAME_DOTS,
+        HA_GAME_DRAW,
+        HA_GAME_PONG,
+        HA_GAME_REACT,
+        HA_GAME_WYR,
+        HA_GAME_SCRAMBLE,
+        HA_GAME_REVERSI,
+        HA_GAME_GUESSCOLOR,
+        HA_GAME_BATTLESHIP,
+        HA_GAME_SPECTRUM,
+        HA_GAME_KMK,
+        HA_GAME_CHESS,
+        HA_GAME_SECRETS,
+        HA_GAME_FILLBLANK,
+        HA_GAME_WEREWOLF,
+        HA_GAME_SPYFALL,
+        HA_GAME_FRANKENDRAW,
+    };
+    static_assert(sizeof(KNOWN_GAMES) == 20, "history test covers all v22 games");
+    assert(HA_GENERATED_GAME_COUNT == 21); // twenty games plus the lobby sentinel
+    assert(haHistKnownGame(HA_GAME_NONE, true));
+    assert(!haHistKnownGame(HA_GAME_NONE, false));
+    for(uint8_t game : KNOWN_GAMES) {
+        assert(haHistKnownGame(game, false));
+        HaHost host = hostWithPlayers();
+        host.activeGame = game;
+        host.games[0].game = game;
+        HaHistSession record = {};
+        haHistFromHost(host, record);
+        record.num = 1;
+        record.seq = 1;
+        assert(haHistRecordValid(record));
+    }
+    assert(!haHistKnownGame(250, true));
+}
+
 static void testStrictRecordsAndInterruptedActiveWrites() {
     resetHistoryRuntime();
     assert(haHistBegin());
@@ -430,6 +471,7 @@ static void testGenerationExhaustionNeverWraps() {
 }
 
 int main() {
+    testKnownGameValidation();
     testStrictRecordsAndInterruptedActiveWrites();
     testArchiveEqualityAndIndexCommitFailure();
     testBootRepairsAStaleIndexBeforeSuppressingActive();
