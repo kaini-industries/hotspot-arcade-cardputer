@@ -39,6 +39,7 @@ build_and_run() {
 
 build_and_run test_config
 build_and_run test_content_loader
+build_and_run test_content_policy
 build_and_run test_active_nvs
 build_and_run test_history
 build_and_run test_host

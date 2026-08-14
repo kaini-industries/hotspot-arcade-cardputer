@@ -69,7 +69,9 @@ than from a numeric range.
 ledger. Each record stores the digest, nickname, avatar, signed saturating session
 score, online/current-PID state, and sparse game-play counts. `ha_event_format.h`
 turns the bounded typed event protocol into the 24-entry localized, scrollable host
-log. Protocol v22 removes the former generic event and round-result callbacks in
+log. Each row is limited to 39 byte/glyph columns from x=3 on the 240px display;
+bounded formatting backs up to the last complete UTF-8 code point. Protocol v22
+removes the former generic event and round-result callbacks in
 favor of that semantic sink. The separate host-directed finished-art stream is
 discarded by the Cardputer adapter rather than becoming an alternate history input;
 the corresponding bounded `fdart` WebSocket picture still reaches phones. The typed
@@ -78,9 +80,11 @@ log is also in-memory only and is not part of a checkpoint or archive.
 ### 3. Content
 
 `tools/content-manifest.json` is the explicit list of accepted games, locales, packs,
-and web assets. `tools/gen-assets.mjs` validates paths, UTF-8 byte counts, duplicate
-routes, pack syntax, and gzip assets, then creates deterministic flash-resident data
-and UI metadata. The manifest is authoritative for the sparse game registry and for
+and web assets. `tools/gen-assets.mjs` validates paths, canonical `Key: value`
+syntax, per-key UTF-8 byte ceilings, duplicate routes, and gzip assets, then creates
+deterministic flash-resident data and UI metadata. Pack values containing
+normalization-sensitive edge whitespace or ASCII controls are rejected. The
+manifest is authoritative for the sparse game registry and for
 the locale fallback graph: both `de` and `pt-br` fall back to `en` when the active
 game has no pack set in the requested language. Locale-specific availability may
 differ, and selection happens once for the whole game; translated and English packs
@@ -100,9 +104,14 @@ locale-only reload preserves that game's phone scores; a game change resets them
 Any allocation, parse, count, or validation failure aborts the staged bank and leaves
 the prior game, bank, locale, round, and scores live.
 
-Content allocations prefer external PSRAM, then make one internal-heap fallback.
-Every content `String` mutation and the final commit are guarded by a 64 KiB internal
-memory reserve so Wi-Fi, AsyncTCP, and direct-draw UI fallback retain working space.
+Content allocations prefer external PSRAM, then make one internal-heap fallback only
+when the requested bytes can be allocated while retaining at least 64 KiB internally;
+the invariant is checked again after the real allocation. Every content `String`
+mutation and final commit uses a conservative 96 KiB admission guard: the same 64 KiB
+runtime reserve plus 32 KiB for Frankendraw's bounded ordinary-heap fallback. This
+keeps Wi-Fi, AsyncTCP, and direct-draw UI fallback working even during a staged game
+transition; a compile-time assertion binds that 32 KiB budget to the vendored
+`FdSheet` allocation at the fixed ten-player capacity.
 Game selection remains a Cardputer loop-task operation because it reads flash-backed
 packs; phone game-change proposals are answered `policy_denied` and never mutate the
 active game or bank.

@@ -51,6 +51,7 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
           duel: false,
           packDirectory: 'draw',
           requiredKeys: ['Word'],
+          keyByteLimits: { Word: 23 },
           minItemsPerPack: 1,
           maxItemsPerPack: 1,
         },
@@ -64,6 +65,7 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
           packDirectory: 'fillblank',
           requiredKeys: [],
           oneOfKeys: ['P', 'A'],
+          keyByteLimits: { P: 127, A: 127 },
           minItemsPerPack: 2,
           maxItemsPerPack: 2,
           packKeyLimits: { P: { min: 1, max: 2 }, A: { min: 1, max: 1 } },
@@ -77,6 +79,7 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
           duel: false,
           packDirectory: 'spyfall',
           requiredKeys: ['Loc', 'R'],
+          keyByteLimits: { Loc: 63, R: 63 },
           repeatableKeys: { R: 2 },
           minItemsPerPack: 1,
           maxItemsPerPack: 1,
@@ -91,7 +94,9 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
         },
       ],
     };
-    put(join(root, 'tools', 'content-manifest.json'), `${JSON.stringify(contract, null, 2)}\n`);
+    const contractPath = join(root, 'tools', 'content-manifest.json');
+    const writeContract = () => put(contractPath, `${JSON.stringify(contract, null, 2)}\n`);
+    writeContract();
     const webManifest = [{ path: '/', file: 'index.html.gz', mime: 'text/html', gzip: true }];
     put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify(webManifest, null, 2)}\n`);
     put(join(root, 'vendor', 'web', 'index.html.gz'), gzipSync(Buffer.from('<h1>ok</h1>')));
@@ -119,6 +124,19 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     assert.match(metadata, /\{"de", "Deutsch", "en"\}/);
     assert.match(metadata, /static_assert\(HA_GAME_FILLBLANK == 17/);
 
+    delete contract.games[0].keyByteLimits.Word;
+    writeContract();
+    failure(root, /game draw keyByteLimits are missing Word/);
+    contract.games[0].keyByteLimits.Word = 256;
+    writeContract();
+    failure(root, /game draw keyByteLimits\.Word is invalid/);
+    contract.games[0].keyByteLimits.Word = 23;
+    contract.games[0].keyByteLimits.NotWord = 23;
+    writeContract();
+    failure(root, /game draw keyByteLimits has unknown field.*NotWord/);
+    delete contract.games[0].keyByteLimits.NotWord;
+    writeContract();
+
     put(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), '// stale\n');
     failure(root, /generated files are stale/, '--check');
     invoke(root);
@@ -141,8 +159,16 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
 
     put(packPath, `Pack: ${'x'.repeat(64)}\nWord: safe\n`);
     failure(root, /pack name exceeds the engine's 63-byte limit/);
+    put(packPath, `Pack: Safe\nWord: ${'é'.repeat(12)}\n`);
+    failure(root, /Word value is 24 UTF-8 bytes; maximum is 23/);
     put(packPath, `Pack: Safe\nWord: ${'x'.repeat(256)}\n`);
     failure(root, /value exceeds the engine's 255-byte limit/);
+    put(packPath, 'Pack:  Padded\nWord: safe\n');
+    failure(root, /leading or trailing whitespace/);
+    put(packPath, 'Pack: Safe\nWord: padded \n');
+    failure(root, /leading or trailing whitespace/);
+    put(packPath, 'Pack: Safe\nWord: bad\u0001value\n');
+    failure(root, /ASCII control byte/);
     put(packPath, validPack);
 
     put(fillblankPath, 'Pack: Broken\nP: prompt\nA: answer\n');

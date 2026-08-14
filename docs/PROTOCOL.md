@@ -98,9 +98,12 @@ choice applies to the complete game bank: translated and English packs are never
 mixed, and availability may differ by locale. The requested locale remains active
 for phone UI configuration even when English pack bytes are used. Spectrum's v22
 Wild Card pack is English-only and is not inserted into either translated Spectrum
-bank. Packless games commit an empty typed bank. Bank allocation prefers PSRAM, falls
-back to internal memory, and the adapter rejects bank creation, content-string
-mutation, or commit when free internal memory is below the 64 KiB reserve.
+bank. Packless games commit an empty typed bank. Bank allocation prefers PSRAM. An
+internal fallback must leave 64 KiB free after the actual allocation; content-string
+mutation and commit require 96 KiB beforehand, including 32 KiB of headroom for
+Frankendraw's bounded fallback store. The content manifest declares every pack key's
+exact engine-buffer byte ceiling; generation rejects oversized UTF-8 values, edge
+whitespace, and ASCII control bytes before firmware compilation.
 
 ## Configuration and planned downtime
 

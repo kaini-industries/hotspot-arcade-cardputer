@@ -129,7 +129,7 @@ for (const [index, game] of content.games.entries()) {
   assertKeys(game, [
     'id', 'constant', 'key', 'label', 'description', 'duel', 'packDirectory',
     'requiredKeys', 'oneOfKeys', 'repeatableKeys', 'minItemsPerPack',
-    'maxItemsPerPack', 'maxPacks', 'packKeyLimits',
+    'maxItemsPerPack', 'maxPacks', 'packKeyLimits', 'keyByteLimits',
   ], `game ${index}`);
   assert(Number.isSafeInteger(game.id) && game.id >= 0 && game.id <= 255, `game ${index} id is invalid`);
   assert(!gameIds.has(game.id), `duplicate game id ${game.id}`);
@@ -147,7 +147,8 @@ for (const [index, game] of content.games.entries()) {
   const hasPack = game.packDirectory !== undefined || game.requiredKeys !== undefined ||
     game.oneOfKeys !== undefined || game.repeatableKeys !== undefined ||
     game.minItemsPerPack !== undefined || game.maxItemsPerPack !== undefined ||
-    game.maxPacks !== undefined || game.packKeyLimits !== undefined;
+    game.maxPacks !== undefined || game.packKeyLimits !== undefined ||
+    game.keyByteLimits !== undefined;
   if (hasPack) {
     safeSegment(game.packDirectory, `game ${game.key} packDirectory`);
     assert(!packDirectories.has(game.packDirectory), `duplicate pack directory ${game.packDirectory}`);
@@ -166,6 +167,15 @@ for (const [index, game] of content.games.entries()) {
       assert(typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(key), `game ${game.key} has an invalid one-of key`);
       assert(!allowed.has(key), `game ${game.key} repeats pack key ${key}`);
       allowed.add(key);
+    }
+    assert(game.keyByteLimits !== undefined, `game ${game.key} keyByteLimits are missing`);
+    assertKeys(game.keyByteLimits, [...allowed], `game ${game.key} keyByteLimits`);
+    const missingByteLimits = [...allowed].filter((key) => !Object.hasOwn(game.keyByteLimits, key));
+    assert(!missingByteLimits.length,
+      `game ${game.key} keyByteLimits are missing ${missingByteLimits.join(', ')}`);
+    for (const [key, maximum] of Object.entries(game.keyByteLimits)) {
+      assert(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= 255,
+        `game ${game.key} keyByteLimits.${key} is invalid`);
     }
     game.repeatableKeys = game.repeatableKeys ?? {};
     assertKeys(game.repeatableKeys, game.requiredKeys, `game ${game.key} repeatableKeys`);
@@ -246,10 +256,14 @@ const parsePack = (path, game) => {
       if (item.length) finishItem(lineNumber);
       continue;
     }
-    const match = /^([A-Za-z][A-Za-z0-9_]*):[ \t]*(.*)$/.exec(line);
+    const match = /^([A-Za-z][A-Za-z0-9_]*): (.*)$/.exec(line);
     assert(match, `${relative(root, path)} line ${lineNumber} is malformed`);
     const [, key, value] = match;
     assert(value.length > 0, `${relative(root, path)} line ${lineNumber} has an empty value`);
+    assert(!/^[ \t]|[ \t]$/.test(value),
+      `${relative(root, path)} line ${lineNumber} has leading or trailing whitespace`);
+    assert(!/[\x00-\x1F\x7F]/.test(value),
+      `${relative(root, path)} line ${lineNumber} contains an ASCII control byte`);
     if (key === 'Pack') {
       assert(!titleSeen && itemCount === 0 && item.length === 0, `${relative(root, path)} has a misplaced or duplicate Pack line`);
       assert(byteLength(value) <= 63,
@@ -260,6 +274,12 @@ const parsePack = (path, game) => {
     assert(titleSeen, `${relative(root, path)} must begin with Pack:`);
     assert(byteLength(value) <= 255,
       `${relative(root, path)} line ${lineNumber} value exceeds the engine's 255-byte limit`);
+    const keyByteLimit = game.keyByteLimits[key];
+    if (keyByteLimit !== undefined) {
+      const valueBytes = byteLength(value);
+      assert(valueBytes <= keyByteLimit,
+        `${relative(root, path)} line ${lineNumber} ${key} value is ${valueBytes} UTF-8 bytes; maximum is ${keyByteLimit}`);
+    }
     item.push([key, value]);
   }
   if (item.length) finishItem(lines.length + 1);

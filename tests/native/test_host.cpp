@@ -89,6 +89,9 @@ static void testImportAndSparsePlayCounts() {
 
 static void testEventRingCapacityAndLocalizedPresenceEvents() {
     static_assert(HA_EV_MAX == 24, "the Cardputer event console must retain 24 entries");
+    static_assert(HA_EV_LEN == 40, "event lines must expose at most 39 display columns");
+    static_assert((HA_EV_LEN - 1U) * 6U <= 237U,
+                  "event lines must fit from x=3 on the 240px display");
     haHostReset();
     haHost.evTotal = 0;
     for(unsigned i = 0; i < 30; i++) {
@@ -114,6 +117,13 @@ static void testEventRingCapacityAndLocalizedPresenceEvents() {
     haHostLeave(1);
     assert(std::strcmp(haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX], "WEG NOVA") == 0);
     haUiSetLocale(HaUiEnglish);
+
+    std::string utf8Cut(HA_EV_LEN - 2, 'x');
+    utf8Cut += "\xC3\xA9";
+    haHostLog(utf8Cut.c_str());
+    const char* bounded = haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX];
+    assert(std::strlen(bounded) == HA_EV_LEN - 2);
+    assert(bounded[HA_EV_LEN - 2] == '\0');
 }
 
 int main() {

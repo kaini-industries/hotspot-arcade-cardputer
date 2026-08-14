@@ -47,6 +47,7 @@
 #include "ha_config.h"
 #include "ha_ssid_transaction.h"
 #include "ha_content.h"
+#include "ha_content_policy.h"
 #include "ha_async_queue.h"
 #include "ha_device.h"
 #include "ha_diagnostics.h"
@@ -69,6 +70,10 @@ static_assert(DUEL_MAX_MATCHES == 5, "duel match capacity must remain five");
 static_assert(PONG_MAX == 5, "Pong match capacity must remain five");
 static_assert(BATTLE_MAX == 5, "Battleship match capacity must remain five");
 static_assert(CHESS_MAX == 5, "Chess match capacity must remain five");
+static_assert(
+    sizeof(FdSheet) * HA_MAX_PLAYERS <=
+        HA_CONTENT_FRANKENDRAW_FALLBACK_BUDGET_BYTES,
+    "Frankendraw fallback exceeds the reserved content-allocation headroom");
 
 // ---- host speaker: short jingles, respecting the audio level set in the UI ----
 // 0 = off, 1 = low, 2 = high. Stored here; the UI settings screen changes it.
@@ -372,21 +377,32 @@ void haWsBroadcast(const String& msg) {
 
 // A v22 ContentBank is the active game's large typed content allocation. Prefer
 // external PSRAM so Wi-Fi, AsyncTCP, and the 8-bit display fallback retain
-// internal SRAM; boards without usable PSRAM get one ordinary-heap attempt.
-// (Frankendraw's separate bounded stroke store remains engine-owned.) String
-// payloads are allocated by Arduino itself, so the engine consults the reserve
-// hook before every content String mutation as well as bank creation.
-static constexpr size_t HA_CONTENT_INTERNAL_RESERVE_BYTES = 64U * 1024U;
+// internal SRAM; boards without usable PSRAM get one guarded ordinary-heap
+// attempt. (Frankendraw's separate bounded stroke store remains engine-owned.)
+// String payloads are allocated by Arduino itself, so the engine consults the
+// conservative mutation guard before every String change and final commit.
 
 void* haContentAlloc(size_t bytes) {
     if(!bytes) return nullptr;
     void* memory = heap_caps_malloc(
         bytes,
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if(!memory)
-        memory = heap_caps_malloc(
-            bytes,
-            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if(memory) return memory;
+
+    const uint32_t internalCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    if(!haContentInternalFallbackFits(
+           heap_caps_get_free_size(internalCaps),
+           bytes))
+        return nullptr;
+    memory = heap_caps_malloc(bytes, internalCaps);
+    // The allocator can consume alignment/metadata bytes beyond the request, and
+    // system tasks allocate concurrently. Verify the invariant after the actual
+    // allocation rather than relying on the preflight observation alone.
+    if(memory && !haContentInternalReserveHeld(
+                     heap_caps_get_free_size(internalCaps))) {
+        heap_caps_free(memory);
+        return nullptr;
+    }
     return memory;
 }
 
@@ -395,8 +411,8 @@ void haContentFree(void* memory) {
 }
 
 bool haContentAllocationAllowed() {
-    return heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >=
-           HA_CONTENT_INTERNAL_RESERVE_BYTES;
+    return haContentMutationGuardHeld(
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 }
 
 bool haPhoneGameChangeAllowed(uint8_t fromGame, uint8_t toGame) {

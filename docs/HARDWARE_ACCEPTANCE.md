@@ -194,10 +194,11 @@ card containing unrelated data.
 | Spectrum Wild Card appears in the English bank only and is not mixed into German or Portuguese-Brazil Spectrum | | | |
 | Existing and resumed phones receive every locale change | | | |
 | German localizes every host menu, history/restore/diagnostics screen, game label, and status message; Portuguese host text falls back to English | | | |
-| All 24 event-log entries remain scrollable in both English and German; ASCII German spellings render without missing glyphs | | | |
+| All 24 event-log entries remain scrollable in both English and German; each row stays within 39 columns and UTF-8 truncation never draws a partial glyph | | | |
 | Changing locale transactionally replaces only the active bank, returns that game to its lobby, and preserves per-game/cumulative score contracts | | | |
 | Injected content allocation/parse/count failure leaves the previous game, bank, locale, round, and scores live | | | |
-| Content allocation prefers PSRAM when available, internal fallback works, and creation/mutation/commit is refused below the 64 KiB internal reserve | | | |
+| Content allocation prefers PSRAM; internal fallback is rejected unless the requested bytes leave 64 KiB free, verified again after allocation | | | |
+| Content creation/mutation/commit requires 96 KiB free: 64 KiB runtime reserve plus 32 KiB Frankendraw fallback headroom | | | |
 | 500 language/game cycles complete | | | |
 | Post-warm-up heap degradation after 500 cycles is under 5% | | | |
 
@@ -226,7 +227,8 @@ summary.
 | Startup free heap | At least 200 KiB | | |
 | Minimum free heap during soak | At least 120 KiB | | |
 | Minimum largest free block | At least 32 KiB | | |
-| Internal free memory at each content allocation/commit guard | At least 64 KiB | | |
+| Internal free memory at each content mutation/commit admission guard | At least 96 KiB | | |
+| Internal free memory after an ordinary-heap content-bank allocation | At least 64 KiB | | |
 | Normal engine-lock hold | Under 10 ms | | |
 | Loop gap outside forced persistence | Under 50 ms | | |
 | Crash, reset, watchdog, corrupt state, or cross-client eviction | None | | |

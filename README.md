@@ -32,7 +32,8 @@ are retained. The exact unmodified source commit is pinned in [UPSTREAM.md](UPST
 - Crash-safe active-session recovery, full microSD history, browsing, and restore.
 - Planned AP pause/rename without resetting play, plus a ten-minute return window.
 - Active-game-only transactional content banks with explicit language fallback and
-  PSRAM-first allocation while reserving 64 KiB of internal memory.
+  PSRAM-first allocation, a hard 64 KiB internal reserve, and another 32 KiB of
+  admission headroom for Frankendraw's bounded fallback store.
 - Bounded socket admission, flow control, rate limits, typed host events, and live
   diagnostics.
 - Reproducible, provenance-locked builds with checksums, SPDX SBOM, attestations,
@@ -49,8 +50,8 @@ M5Unified runtime identities `M5Cardputer` (board ID 14) and `M5CardputerADV`
 (board ID 24), prints and displays the detected model, and stops before OTA health
 confirmation on any other board identity.
 
-The reviewed v22 universal build uses 1,504,560 bytes of the 3,342,336-byte app
-partition and 60,472 bytes of static DRAM, leaving 1,837,776 bytes of image headroom
+The reviewed v22 universal build uses 1,505,072 bytes of the 3,342,336-byte app
+partition and 60,472 bytes of static DRAM, leaving 1,837,264 bytes of image headroom
 and 267,208 bytes for stack and heap at link time. Runtime heap high-water marks on
 both supported devices remain release-gating measurements in the hardware matrix.
 
@@ -256,9 +257,9 @@ The implementation has five logical modules:
 2. **Engine and host mirror** — `vendor/engine/`, `ha_host.h`, and
    `ha_event_format.h` own authoritative game state, stable identities, cumulative
    awards, bounded typed events, and UI snapshots.
-3. **Content** — `ha_content.h`, generated metadata/assets, and the explicit content
-   manifest implement host-authoritative, active-game-only transactional content
-   replacement with manifest-declared locale fallback.
+3. **Content** — `ha_content.h`, `ha_content_policy.h`, generated metadata/assets,
+   and the explicit content manifest implement host-authoritative, active-game-only
+   transactional replacement, allocation guards, and manifest-declared fallback.
 4. **Recovery** — `ha_config.h`, `ha_active_nvs.h`, and `ha_history.h` implement
    redundant SD/NVS records, migration, immutable archives, and restore.
 5. **Host presentation** — `ha_ui.h`, `ha_diagnostics.h`, and `ha_async_queue.h`
