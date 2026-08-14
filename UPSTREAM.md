@@ -6,11 +6,11 @@ Everything under `vendor/` is copied from one committed Git object in
 | | |
 | --- | --- |
 | repository | `https://github.com/kaini-industries/hotspot-arcade` |
-| commit | `aad6e8ffa03a125aa4d6be14030a3f887d5cde05` |
-| describe | `v1.6.0-7-gaad6e8f` |
-| source tree SHA-256 | `48df7455a097376d968a3676acdd6f99ef84c8c214341866757aaeb08835c606` |
+| commit | `b7b4b235ab07ed08c205f4bb451b153d1508bf4d` |
+| describe | `v1.8.0-10-gb7b4b23` |
+| source tree SHA-256 | `1830d3da68294993a6cd34646165f153f1a313eb30a9f0309d0743ae10af9db0` |
 | web bundle | 1 file(s) |
-| content packs | 70 pack(s) |
+| content packs | 87 pack(s) |
 | full file inventory | `UPSTREAM.lock.json` |
 
 Refresh from a clean upstream and downstream checkout:

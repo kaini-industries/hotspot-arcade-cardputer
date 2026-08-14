@@ -49,11 +49,10 @@ M5Unified runtime identities `M5Cardputer` (board ID 14) and `M5CardputerADV`
 (board ID 24), prints and displays the detected model, and stops before OTA health
 confirmation on any other board identity.
 
-The previous locked universal candidate used 1,412,448 bytes of the 3,342,336-byte
-app partition and 58,248 bytes of static DRAM, leaving 1,929,888 bytes of image
-headroom and 269,432 bytes for stack and heap at link time. Those figures are a
-comparison baseline, not v22 acceptance values; the clean v22 candidate must record
-its own image, DRAM, and runtime heap measurements in the hardware matrix.
+The reviewed v22 universal build uses 1,504,560 bytes of the 3,342,336-byte app
+partition and 60,472 bytes of static DRAM, leaving 1,837,776 bytes of image headroom
+and 267,208 bytes for stack and heap at link time. Runtime heap high-water marks on
+both supported devices remain release-gating measurements in the hardware matrix.
 
 The locked M5GFX 0.2.26 source is amended only by the exact reviewed upstream
 Cardputer-Adv detection fix described under [Developer setup](#developer-setup).
@@ -280,7 +279,7 @@ Caramanico's original project so selected changes can still be proposed upstream
 ```sh
 node tools/sync-upstream.mjs \
   --repo ../hotspot-arcade \
-  --commit c319934b7bd3ccc7f45fa724d151c278827958ec
+  --commit b7b4b235ab07ed08c205f4bb451b153d1508bf4d
 node tools/gen-assets.mjs
 ```
 
