@@ -35,9 +35,12 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     mkdirSync(join(root, 'hotspot-arcade-cardputer'));
     copyFileSync(join(project, 'tools', 'gen-assets.mjs'), join(root, 'tools', 'gen-assets.mjs'));
     const contract = {
-      schema: 1,
+      schema: 2,
       maxPacksPerGame: 1,
-      languages: [{ code: 'en', label: 'English', root: 'vendor/packs' }],
+      languages: [
+        { code: 'en', label: 'English', root: 'vendor/packs/en' },
+        { code: 'de', label: 'Deutsch', root: 'vendor/packs/de', fallback: 'en' },
+      ],
       games: [
         {
           id: 5,
@@ -48,6 +51,35 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
           duel: false,
           packDirectory: 'draw',
           requiredKeys: ['Word'],
+          minItemsPerPack: 1,
+          maxItemsPerPack: 1,
+        },
+        {
+          id: 17,
+          constant: 'HA_GAME_FILLBLANK',
+          key: 'fillblank',
+          label: 'Fill the Blank',
+          description: 'Cards',
+          duel: false,
+          packDirectory: 'fillblank',
+          requiredKeys: [],
+          oneOfKeys: ['P', 'A'],
+          minItemsPerPack: 2,
+          maxItemsPerPack: 2,
+          packKeyLimits: { P: { min: 1, max: 2 }, A: { min: 1, max: 1 } },
+        },
+        {
+          id: 19,
+          constant: 'HA_GAME_SPYFALL',
+          key: 'spyfall',
+          label: 'Spyfall',
+          description: 'Roles',
+          duel: false,
+          packDirectory: 'spyfall',
+          requiredKeys: ['Loc', 'R'],
+          repeatableKeys: { R: 2 },
+          minItemsPerPack: 1,
+          maxItemsPerPack: 1,
         },
         {
           id: 0,
@@ -65,8 +97,13 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     put(join(root, 'vendor', 'web', 'index.html.gz'), gzipSync(Buffer.from('<h1>ok</h1>')));
     for (const name of ['ha_proto.h', 'ha_json.h', 'ha_games.h']) put(join(root, 'vendor', 'engine', name), `// ${name}\n`);
     const validPack = 'Pack: É\nWord: café\n';
-    const packPath = join(root, 'vendor', 'packs', 'draw', 'words.txt');
+    const packPath = join(root, 'vendor', 'packs', 'en', 'draw', 'words.txt');
     put(packPath, validPack);
+    const fillblankPath = join(root, 'vendor', 'packs', 'en', 'fillblank', 'cards.txt');
+    put(fillblankPath, 'Pack: Cards\nP: _____ wins.\n---\nA: a robot\n');
+    const spyfallPath = join(root, 'vendor', 'packs', 'en', 'spyfall', 'places.txt');
+    put(spyfallPath, 'Pack: Places\nLoc: Beach\nR: Lifeguard\nR: Surfer\n');
+    put(join(root, 'vendor', 'packs', 'de', 'draw', 'words.txt'), 'Pack: Wörter\nWord: Haus\n');
 
     invoke(root);
     const outputs = ['ha_bundle.h', 'ha_metadata.h', 'ha_proto.h', 'ha_json.h', 'ha_games.h'];
@@ -76,20 +113,22 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     assert.deepEqual(second, first);
     invoke(root, '--check');
     const header = first[0].toString('utf8');
-    assert.match(header, new RegExp(`packs: ${Buffer.byteLength(validPack, 'utf8')} UTF-8 bytes`));
-    assert.match(readFileSync(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), 'utf8'), /HA_GENERATED_LANGUAGES/);
+    assert.match(header, /R: Lifeguard\nR: Surfer/);
+    const metadata = readFileSync(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), 'utf8');
+    assert.match(metadata, /HA_GENERATED_LANGUAGES/);
+    assert.match(metadata, /\{"de", "Deutsch", "en"\}/);
 
     put(join(root, 'hotspot-arcade-cardputer', 'ha_metadata.h'), '// stale\n');
     failure(root, /generated files are stale/, '--check');
     invoke(root);
 
-    put(join(root, 'vendor', 'packs', 'unknown', 'words.txt'), validPack);
+    put(join(root, 'vendor', 'packs', 'en', 'unknown', 'words.txt'), validPack);
     failure(root, /unknown game entries/);
-    rmSync(join(root, 'vendor', 'packs', 'unknown'), { recursive: true });
+    rmSync(join(root, 'vendor', 'packs', 'en', 'unknown'), { recursive: true });
 
-    put(join(root, 'vendor', 'packs', 'draw', 'extra.txt'), validPack);
+    put(join(root, 'vendor', 'packs', 'en', 'draw', 'extra.txt'), validPack);
     failure(root, /refusing truncation/);
-    rmSync(join(root, 'vendor', 'packs', 'draw', 'extra.txt'));
+    rmSync(join(root, 'vendor', 'packs', 'en', 'draw', 'extra.txt'));
 
     put(packPath, Buffer.from([0xff, 0xfe]));
     failure(root, /not valid UTF-8/);
@@ -99,6 +138,15 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     failure(root, /reserved raw-string delimiter/);
     put(packPath, validPack);
 
+    put(fillblankPath, 'Pack: Broken\nP: prompt\nA: answer\n');
+    failure(root, /exactly one of P, A/);
+    put(fillblankPath, 'Pack: Broken\nP: prompt\n---\nP: another\n');
+    failure(root, /0 A record/);
+    put(fillblankPath, 'Pack: Cards\nP: _____ wins.\n---\nA: a robot\n');
+    put(spyfallPath, 'Pack: Broken\nLoc: Beach\nR: One\nR: Two\nR: Three\n');
+    failure(root, /repeats R more than 2/);
+    put(spyfallPath, 'Pack: Places\nLoc: Beach\nR: Lifeguard\nR: Surfer\n');
+
     put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify([
       ...webManifest,
       { ...webManifest[0], file: 'second.html.gz' },
@@ -106,6 +154,8 @@ test('asset generation is deterministic and rejects omissions, unsafe content, a
     put(join(root, 'vendor', 'web', 'second.html.gz'), gzipSync(Buffer.from('duplicate')));
     failure(root, /duplicate web route/);
     rmSync(join(root, 'vendor', 'web', 'second.html.gz'));
+    put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify([{ ...webManifest[0], crc: 1 }])}\n`);
+    failure(root, /CRC does not match/);
     put(join(root, 'vendor', 'web', 'manifest.json'), `${JSON.stringify(webManifest)}\n`);
     put(join(root, 'vendor', 'web', 'index.html.gz'), Buffer.from('not gzip'));
     failure(root, /not valid gzip/);

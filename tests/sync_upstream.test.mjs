@@ -65,12 +65,16 @@ test('sync copies only the exact commit and records a complete deterministic loc
       draw: 'Pack: Test\nWord: house\n',
       spectrum: 'Pack: Test\nLeft: A\nRight: B\n',
       kmk: 'Pack: Test\nName: Ada\n',
+      secrets: 'Pack: Test\nQ: Secret?\n',
+      fillblank: 'Pack: Test\nP: _____ wins.\n---\nA: a robot\n',
+      spyfall: 'Pack: Test\nLoc: Beach\nR: Lifeguard\nR: Surfer\n',
     };
     put(join(upstream, 'packs', 'README.md'), '# Pack format\n');
     for (const [directory, text] of Object.entries(packShapes)) {
       put(join(upstream, 'packs', directory, 'test.txt'), text);
       put(join(upstream, 'packs', directory, 'de', 'test.txt'), text);
-      put(join(upstream, 'packs', directory, 'pt-br', 'test.txt'), text);
+      if (!['secrets', 'fillblank', 'spyfall'].includes(directory))
+        put(join(upstream, 'packs', directory, 'pt-br', 'test.txt'), text);
     }
     put(join(upstream, 'packs', 'spectrum', 'README.md'), '# Spectrum notes\n');
     put(join(upstream, 'esp32', 'libs', 'Example', '.gitignore'), 'build\n');
@@ -81,7 +85,16 @@ test('sync copies only the exact commit and records a complete deterministic loc
     mkdirSync(join(downstream, 'tools'), { recursive: true });
     copyFileSync(join(project, 'tools', 'sync-upstream.mjs'), join(downstream, 'tools', 'sync-upstream.mjs'));
     copyFileSync(join(project, 'tools', 'upstream-source.json'), join(downstream, 'tools', 'upstream-source.json'));
-    copyFileSync(join(project, 'tools', 'content-manifest.json'), join(downstream, 'tools', 'content-manifest.json'));
+    put(join(downstream, 'tools', 'content-manifest.json'), `${JSON.stringify({
+      schema: 2,
+      maxPacksPerGame: 8,
+      languages: [
+        { code: 'en', label: 'English', root: 'vendor/packs/en' },
+        { code: 'de', label: 'Deutsch', root: 'vendor/packs/de', fallback: 'en' },
+        { code: 'pt-br', label: 'Português (Brasil)', root: 'vendor/packs/pt-br', fallback: 'en' },
+      ],
+      games: Object.keys(packShapes).map((packDirectory, id) => ({ id, packDirectory })),
+    }, null, 2)}\n`);
     for (const directory of ['engine', 'web', 'packs', 'libs']) put(join(downstream, 'vendor', directory, 'obsolete.txt'), 'obsolete\n');
     put(join(downstream, 'UPSTREAM.md'), 'old provenance\n');
     commitAll(downstream, 'fixture downstream');
@@ -121,6 +134,8 @@ test('sync copies only the exact commit and records a complete deterministic loc
         packShapes.draw,
       );
     }
+    assert.equal(existsSync(join(downstream, 'vendor', 'packs', 'pt-br', 'fillblank')), false);
+    assert.equal(existsSync(join(downstream, 'vendor', 'packs', 'pt-br', 'spyfall')), false);
     assert.equal(existsSync(join(downstream, 'vendor', 'packs', 'README.md')), false);
     const lock = JSON.parse(readFileSync(join(downstream, 'UPSTREAM.lock.json'), 'utf8'));
     assert.equal(lock.repository, 'https://github.com/kaini-industries/hotspot-arcade');

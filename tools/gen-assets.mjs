@@ -70,20 +70,30 @@ const cppString = (value) => {
 };
 const byteLength = (text) => Buffer.byteLength(text, 'utf8');
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const crc32 = (bytes) => {
+  let crc = 0xFFFFFFFF;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1)
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+};
 
 // ---- reviewed content contract ---------------------------------------------
 const contentPath = join(root, 'tools', 'content-manifest.json');
 const content = readJson(contentPath);
 assertKeys(content, ['schema', 'maxPacksPerGame', 'languages', 'games'], 'content manifest');
-assert(content.schema === 1, 'content manifest schema must be 1');
+assert(content.schema === 2, 'content manifest schema must be 2');
 assert(Number.isSafeInteger(content.maxPacksPerGame) && content.maxPacksPerGame > 0 && content.maxPacksPerGame <= 16,
   'maxPacksPerGame must be an integer from 1 to 16');
 assert(Array.isArray(content.languages) && content.languages.length > 0, 'content manifest needs languages');
 assert(Array.isArray(content.games) && content.games.length > 0, 'content manifest needs games');
 
 const languageCodes = new Set();
+const languagesByCode = new Map();
 for (const [index, language] of content.languages.entries()) {
-  assertKeys(language, ['code', 'label', 'root'], `language ${index}`);
+  assertKeys(language, ['code', 'label', 'root', 'fallback'], `language ${index}`);
   assert(typeof language.code === 'string' && /^[a-z]{2}(?:-[a-z]{2})?$/.test(language.code), `language ${index} code is invalid`);
   assert(!languageCodes.has(language.code), `duplicate language code ${language.code}`);
   languageCodes.add(language.code);
@@ -96,6 +106,19 @@ for (const [index, language] of content.languages.entries()) {
   assert(existsSync(resolved) && lstatSync(resolved).isDirectory() && !lstatSync(resolved).isSymbolicLink(),
     `language ${language.code} root is not a real directory`);
   language.resolvedRoot = resolved;
+  if (language.fallback !== undefined) {
+    assert(typeof language.fallback === 'string' && /^[a-z]{2}(?:-[a-z]{2})?$/.test(language.fallback),
+      `language ${language.code} fallback is invalid`);
+  }
+  languagesByCode.set(language.code, language);
+}
+assert(content.languages[0].code === 'en' && content.languages[0].fallback === undefined,
+  'the first language must be en without a fallback');
+for (const [index, language] of content.languages.entries()) {
+  if (language.fallback === undefined) continue;
+  const fallbackIndex = content.languages.findIndex((candidate) => candidate.code === language.fallback);
+  assert(fallbackIndex >= 0, `language ${language.code} fallback ${language.fallback} is unknown`);
+  assert(fallbackIndex < index, `language ${language.code} fallback must precede it`);
 }
 
 const gameIds = new Set();
@@ -103,7 +126,11 @@ const gameKeys = new Set();
 const gameConstants = new Set();
 const packDirectories = new Map();
 for (const [index, game] of content.games.entries()) {
-  assertKeys(game, ['id', 'constant', 'key', 'label', 'description', 'duel', 'packDirectory', 'requiredKeys'], `game ${index}`);
+  assertKeys(game, [
+    'id', 'constant', 'key', 'label', 'description', 'duel', 'packDirectory',
+    'requiredKeys', 'oneOfKeys', 'repeatableKeys', 'minItemsPerPack',
+    'maxItemsPerPack', 'maxPacks', 'packKeyLimits',
+  ], `game ${index}`);
   assert(Number.isSafeInteger(game.id) && game.id >= 0 && game.id <= 255, `game ${index} id is invalid`);
   assert(!gameIds.has(game.id), `duplicate game id ${game.id}`);
   gameIds.add(game.id);
@@ -117,17 +144,52 @@ for (const [index, game] of content.games.entries()) {
   assert(typeof game.description === 'string' && game.description.length && byteLength(game.description) <= 96,
     `game ${game.key} description is invalid`);
   assert(typeof game.duel === 'boolean', `game ${game.key} duel must be boolean`);
-  const hasPack = game.packDirectory !== undefined || game.requiredKeys !== undefined;
+  const hasPack = game.packDirectory !== undefined || game.requiredKeys !== undefined ||
+    game.oneOfKeys !== undefined || game.repeatableKeys !== undefined ||
+    game.minItemsPerPack !== undefined || game.maxItemsPerPack !== undefined ||
+    game.maxPacks !== undefined || game.packKeyLimits !== undefined;
   if (hasPack) {
     safeSegment(game.packDirectory, `game ${game.key} packDirectory`);
     assert(!packDirectories.has(game.packDirectory), `duplicate pack directory ${game.packDirectory}`);
-    assert(Array.isArray(game.requiredKeys) && game.requiredKeys.length > 0, `game ${game.key} requiredKeys are missing`);
-    const required = new Set();
+    assert(Array.isArray(game.requiredKeys), `game ${game.key} requiredKeys are missing`);
+    game.oneOfKeys = game.oneOfKeys ?? [];
+    assert(Array.isArray(game.oneOfKeys), `game ${game.key} oneOfKeys must be an array`);
+    assert(game.requiredKeys.length > 0 || game.oneOfKeys.length > 0,
+      `game ${game.key} needs requiredKeys or oneOfKeys`);
+    const allowed = new Set();
     for (const key of game.requiredKeys) {
       assert(typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(key), `game ${game.key} has an invalid pack key`);
-      assert(!required.has(key), `game ${game.key} repeats pack key ${key}`);
-      required.add(key);
+      assert(!allowed.has(key), `game ${game.key} repeats pack key ${key}`);
+      allowed.add(key);
     }
+    for (const key of game.oneOfKeys) {
+      assert(typeof key === 'string' && /^[A-Za-z][A-Za-z0-9_]*$/.test(key), `game ${game.key} has an invalid one-of key`);
+      assert(!allowed.has(key), `game ${game.key} repeats pack key ${key}`);
+      allowed.add(key);
+    }
+    game.repeatableKeys = game.repeatableKeys ?? {};
+    assertKeys(game.repeatableKeys, game.requiredKeys, `game ${game.key} repeatableKeys`);
+    for (const [key, maximum] of Object.entries(game.repeatableKeys)) {
+      assert(Number.isSafeInteger(maximum) && maximum >= 2 && maximum <= 64,
+        `game ${game.key} repeatable key ${key} maximum is invalid`);
+    }
+    assert(Number.isSafeInteger(game.minItemsPerPack) && game.minItemsPerPack > 0,
+      `game ${game.key} minItemsPerPack is invalid`);
+    assert(Number.isSafeInteger(game.maxItemsPerPack) && game.maxItemsPerPack >= game.minItemsPerPack &&
+      game.maxItemsPerPack <= 255, `game ${game.key} maxItemsPerPack is invalid`);
+    game.maxPacks = game.maxPacks ?? content.maxPacksPerGame;
+    assert(Number.isSafeInteger(game.maxPacks) && game.maxPacks > 0 && game.maxPacks <= content.maxPacksPerGame,
+      `game ${game.key} maxPacks is invalid`);
+    game.packKeyLimits = game.packKeyLimits ?? {};
+    assertKeys(game.packKeyLimits, [...allowed], `game ${game.key} packKeyLimits`);
+    for (const [key, limits] of Object.entries(game.packKeyLimits)) {
+      assertKeys(limits, ['min', 'max'], `game ${game.key} packKeyLimits.${key}`);
+      assert(Number.isSafeInteger(limits.min) && limits.min >= 0 &&
+        Number.isSafeInteger(limits.max) && limits.max >= limits.min &&
+        limits.max <= game.maxItemsPerPack * (game.repeatableKeys[key] ?? 1),
+      `game ${game.key} packKeyLimits.${key} is invalid`);
+    }
+    game.allowedKeys = allowed;
     packDirectories.set(game.packDirectory, game);
   }
 }
@@ -143,26 +205,45 @@ const parsePack = (path, game) => {
   assert(lines.every((line) => byteLength(line) <= 1024), `${relative(root, path)} has a line over 1024 UTF-8 bytes`);
 
   let titleSeen = false;
-  let item = new Map();
+  let item = [];
   let itemCount = 0;
-  const required = new Set(game.requiredKeys);
+  const packKeyCounts = new Map([...game.allowedKeys].map((key) => [key, 0]));
   const finishItem = (lineNumber) => {
-    if (!item.size) fail(`${relative(root, path)} has an empty item before line ${lineNumber}`);
-    const missing = game.requiredKeys.filter((key) => !item.has(key));
-    const extra = [...item.keys()].filter((key) => !required.has(key));
+    if (!item.length) fail(`${relative(root, path)} has an empty item before line ${lineNumber}`);
+    const counts = new Map();
+    for (const [key] of item) counts.set(key, (counts.get(key) ?? 0) + 1);
+    const missing = game.requiredKeys.filter((key) => !counts.has(key));
+    const extra = [...new Set(item.map(([key]) => key))].filter((key) => !game.allowedKeys.has(key));
     assert(!missing.length, `${relative(root, path)} item ${itemCount + 1} is missing ${missing.join(', ')}`);
     assert(!extra.length, `${relative(root, path)} item ${itemCount + 1} has unknown key(s) ${extra.join(', ')}`);
-    if (game.key === 'trivia') assert(/^[ABCD]$/.test(item.get('Answer')), `${relative(root, path)} has a trivia Answer outside A-D`);
+    for (const key of game.requiredKeys) {
+      const count = counts.get(key) ?? 0;
+      const maximum = game.repeatableKeys[key] ?? 1;
+      assert(count <= maximum,
+        `${relative(root, path)} item ${itemCount + 1} repeats ${key} more than ${maximum} time(s)`);
+    }
+    if (game.oneOfKeys.length) {
+      const selected = game.oneOfKeys.filter((key) => counts.has(key));
+      assert(selected.length === 1 && counts.get(selected[0]) === 1,
+        `${relative(root, path)} item ${itemCount + 1} must contain exactly one of ${game.oneOfKeys.join(', ')}`);
+    }
+    if (game.key === 'trivia') {
+      const answer = item.find(([key]) => key === 'Answer')?.[1];
+      assert(/^[ABCD]$/.test(answer), `${relative(root, path)} has a trivia Answer outside A-D`);
+    }
+    for (const [key, count] of counts)
+      if (packKeyCounts.has(key)) packKeyCounts.set(key, packKeyCounts.get(key) + count);
     itemCount += 1;
-    item = new Map();
+    assert(itemCount <= game.maxItemsPerPack,
+      `${relative(root, path)} has more than ${game.maxItemsPerPack} items`);
+    item = [];
   };
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const lineNumber = index + 1;
-    if (!line.trim()) continue;
-    if (line === '---') {
-      finishItem(lineNumber);
+    if (!line.trim() || line === '---') {
+      if (item.length) finishItem(lineNumber);
       continue;
     }
     const match = /^([A-Za-z][A-Za-z0-9_]*):[ \t]*(.*)$/.exec(line);
@@ -170,17 +251,22 @@ const parsePack = (path, game) => {
     const [, key, value] = match;
     assert(value.length > 0, `${relative(root, path)} line ${lineNumber} has an empty value`);
     if (key === 'Pack') {
-      assert(!titleSeen && itemCount === 0 && item.size === 0, `${relative(root, path)} has a misplaced or duplicate Pack line`);
+      assert(!titleSeen && itemCount === 0 && item.length === 0, `${relative(root, path)} has a misplaced or duplicate Pack line`);
       titleSeen = true;
       continue;
     }
     assert(titleSeen, `${relative(root, path)} must begin with Pack:`);
-    assert(!item.has(key), `${relative(root, path)} item ${itemCount + 1} repeats ${key}`);
-    item.set(key, value);
+    item.push([key, value]);
   }
-  if (item.size) finishItem(lines.length + 1);
+  if (item.length) finishItem(lines.length + 1);
   assert(titleSeen, `${relative(root, path)} is missing Pack:`);
-  assert(itemCount > 0, `${relative(root, path)} has no content items`);
+  assert(itemCount >= game.minItemsPerPack,
+    `${relative(root, path)} has ${itemCount} items; minimum is ${game.minItemsPerPack}`);
+  for (const [key, limits] of Object.entries(game.packKeyLimits)) {
+    const count = packKeyCounts.get(key) ?? 0;
+    assert(count >= limits.min && count <= limits.max,
+      `${relative(root, path)} has ${count} ${key} record(s); expected ${limits.min}..${limits.max}`);
+  }
   return { text, itemCount };
 };
 
@@ -191,7 +277,11 @@ for (const language of content.languages) {
   assert(!unknown.length, `${language.root} contains unknown game entries: ${unknown.map((entry) => entry.name).join(', ')}`);
   for (const [packDirectory, game] of packDirectories) {
     const directory = join(language.resolvedRoot, packDirectory);
-    assert(existsSync(directory), `${language.root} is missing ${packDirectory}`);
+    if (!existsSync(directory)) {
+      assert(language.fallback !== undefined,
+        `${language.root} is missing ${packDirectory} and has no fallback`);
+      continue;
+    }
     const stat = lstatSync(directory);
     assert(stat.isDirectory() && !stat.isSymbolicLink(), `${relative(root, directory)} must be a real directory`);
     const entriesInDirectory = readdirSync(directory, { withFileTypes: true });
@@ -201,8 +291,8 @@ for (const language of content.languages) {
     }
     const names = entriesInDirectory.map((entry) => entry.name).sort((a, b) => a.localeCompare(b, 'en'));
     assert(names.length > 0, `${relative(root, directory)} has no packs`);
-    assert(names.length <= content.maxPacksPerGame,
-      `${relative(root, directory)} has ${names.length} packs; maximum is ${content.maxPacksPerGame} (refusing truncation)`);
+    assert(names.length <= game.maxPacks,
+      `${relative(root, directory)} has ${names.length} packs; maximum is ${game.maxPacks} (refusing truncation)`);
     for (const name of names) {
       const path = inside(directory, join(directory, name), `pack ${name}`);
       const parsed = parsePack(path, game);
@@ -216,6 +306,16 @@ for (const language of content.languages) {
     }
   }
 }
+const packCoverage = new Set(packs.map((pack) => `${pack.language}\0${pack.gameConstant}`));
+for (const language of content.languages) {
+  for (const game of packDirectories.values()) {
+    let candidate = language;
+    while (candidate && !packCoverage.has(`${candidate.code}\0${game.constant}`))
+      candidate = candidate.fallback ? languagesByCode.get(candidate.fallback) : null;
+    assert(candidate,
+      `language ${language.code} has no ${game.packDirectory} packs in its fallback chain`);
+  }
+}
 
 // ---- web bundle -------------------------------------------------------------
 const webRoot = join(vendor, 'web');
@@ -225,7 +325,7 @@ assert(Array.isArray(webManifest) && webManifest.length > 0, 'vendor/web/manifes
 const routes = new Set();
 const webNames = new Set();
 const files = webManifest.map((entry, index) => {
-  assertKeys(entry, ['path', 'file', 'mime', 'gzip'], `web manifest entry ${index}`);
+  assertKeys(entry, ['path', 'file', 'mime', 'gzip', 'crc'], `web manifest entry ${index}`);
   assert(typeof entry.path === 'string' && entry.path.startsWith('/') && !entry.path.includes('..') &&
     !entry.path.includes('\\') && !entry.path.includes('?') && !entry.path.includes('#') && !entry.path.includes('\0'),
   `web manifest entry ${index} route is unsafe`);
@@ -241,6 +341,12 @@ const files = webManifest.map((entry, index) => {
   assert(existsSync(path) && lstatSync(path).isFile() && !lstatSync(path).isSymbolicLink(), `web asset ${entry.file} is missing or unsafe`);
   const bytes = readFileSync(path);
   assert(bytes.length > 0, `web asset ${entry.file} is empty`);
+  if (entry.crc !== undefined) {
+    assert(Number.isSafeInteger(entry.crc) && entry.crc >= 0 && entry.crc <= 0xFFFFFFFF,
+      `web asset ${entry.file} CRC is invalid`);
+    assert(crc32(bytes) === entry.crc,
+      `web asset ${entry.file} CRC does not match its compressed bytes`);
+  }
   try {
     const expanded = gunzipSync(bytes);
     assert(expanded.length > 0, `web asset ${entry.file} expands to an empty file`);
@@ -253,7 +359,9 @@ const expectedWebEntries = new Set(['manifest.json', ...webNames]);
 const unexpectedWebEntries = readdirSync(webRoot).filter((name) => !expectedWebEntries.has(name));
 assert(!unexpectedWebEntries.length, `vendor/web contains unmanifested entries: ${unexpectedWebEntries.join(', ')}`);
 const totalWeb = files.reduce((total, file) => total + file.bytes.length, 0);
-assert(totalWeb <= 60 * 1024, `compressed web bundle is ${totalWeb} bytes; limit is 61440`);
+const maxWebBytes = 72 * 1024;
+assert(totalWeb <= maxWebBytes,
+  `compressed web bundle is ${totalWeb} bytes; limit is ${maxWebBytes}`);
 
 const hex = (buffer) => {
   const lines = [];
@@ -296,7 +404,7 @@ ${packs.map((pack) => `    {${pack.gameConstant}, ${cppString(pack.language)}, $
 static const size_t HA_BAKED_PACK_COUNT = sizeof(HA_BAKED_PACKS) / sizeof(HA_BAKED_PACKS[0]);
 `;
 
-const metadataHeader = `// GENERATED by tools/gen-assets.mjs -- do not edit by hand.\n// Game and language UI metadata comes from tools/content-manifest.json.\n#pragma once\n#include <Arduino.h>\n#include "ha_proto.h"\n\nstruct HaGeneratedGame {\n    uint8_t id;\n    const char* key;\n    const char* label;\n    const char* desc;\n    bool duel;\n};\n\nstatic const HaGeneratedGame HA_GENERATED_GAMES[] = {\n${content.games.map((game) => `    {${game.constant}, ${cppString(game.key)}, ${cppString(game.label)}, ${cppString(game.description)}, ${game.duel ? 'true' : 'false'}},`).join('\n')}\n};\nstatic const size_t HA_GENERATED_GAME_COUNT = sizeof(HA_GENERATED_GAMES) / sizeof(HA_GENERATED_GAMES[0]);\n\nstruct HaGeneratedLanguage {\n    const char* code;\n    const char* label;\n};\n\nstatic const HaGeneratedLanguage HA_GENERATED_LANGUAGES[] = {\n${content.languages.map((language) => `    {${cppString(language.code)}, ${cppString(language.label)}},`).join('\n')}\n};\nstatic const size_t HA_GENERATED_LANGUAGE_COUNT = sizeof(HA_GENERATED_LANGUAGES) / sizeof(HA_GENERATED_LANGUAGES[0]);\n`;
+const metadataHeader = `// GENERATED by tools/gen-assets.mjs -- do not edit by hand.\n// Game and language UI metadata comes from tools/content-manifest.json.\n#pragma once\n#include <Arduino.h>\n#include "ha_proto.h"\n\nstruct HaGeneratedGame {\n    uint8_t id;\n    const char* key;\n    const char* label;\n    const char* desc;\n    bool duel;\n};\n\nstatic const HaGeneratedGame HA_GENERATED_GAMES[] = {\n${content.games.map((game) => `    {${game.constant}, ${cppString(game.key)}, ${cppString(game.label)}, ${cppString(game.description)}, ${game.duel ? 'true' : 'false'}},`).join('\n')}\n};\nstatic const size_t HA_GENERATED_GAME_COUNT = sizeof(HA_GENERATED_GAMES) / sizeof(HA_GENERATED_GAMES[0]);\n\nstruct HaGeneratedLanguage {\n    const char* code;\n    const char* label;\n    const char* fallback;\n};\n\nstatic const HaGeneratedLanguage HA_GENERATED_LANGUAGES[] = {\n${content.languages.map((language) => `    {${cppString(language.code)}, ${cppString(language.label)}, ${cppString(language.fallback ?? '')}},`).join('\n')}\n};\nstatic const size_t HA_GENERATED_LANGUAGE_COUNT = sizeof(HA_GENERATED_LANGUAGES) / sizeof(HA_GENERATED_LANGUAGES[0]);\n`;
 
 const generated = new Map([
   [join(sketch, 'ha_bundle.h'), bundleHeader],

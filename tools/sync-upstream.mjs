@@ -31,6 +31,15 @@ const run = (command, args, options = {}) => execFileSync(command, args, {
 }).trim();
 const git = (repository, ...args) => run('git', ['-C', repository, ...args]);
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const crc32 = (bytes) => {
+  let crc = 0xFFFFFFFF;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1)
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+};
 const readJson = (path) => {
   try { return JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { fail(`${relative(root, path)} is invalid JSON: ${error.message}`); }
@@ -142,7 +151,7 @@ try {
   copyFile(join(webSource, 'manifest.json'), join(webDestination, 'manifest.json'));
   for (const [index, entry] of webManifest.entries()) {
     assert(entry && typeof entry === 'object' && !Array.isArray(entry), `web manifest entry ${index} must be an object`);
-    assert(Object.keys(entry).every((key) => ['path', 'file', 'mime', 'gzip'].includes(key)), `web manifest entry ${index} has unknown fields`);
+    assert(Object.keys(entry).every((key) => ['path', 'file', 'mime', 'gzip', 'crc'].includes(key)), `web manifest entry ${index} has unknown fields`);
     assert(typeof entry.path === 'string' && entry.path.startsWith('/') && !entry.path.includes('..') &&
       !entry.path.includes('\\') && !entry.path.includes('?') && !entry.path.includes('#'), `web route ${index} is unsafe`);
     assert(!routes.has(entry.path), `duplicate web route ${entry.path}`);
@@ -151,7 +160,14 @@ try {
     assert(entry.file.endsWith('.gz') && entry.gzip === true, `web asset ${entry.file} must be gzip`);
     assert(!webFiles.has(entry.file), `duplicate web file ${entry.file}`);
     webFiles.add(entry.file);
-    copyFile(inside(webSource, join(webSource, entry.file), `web asset ${entry.file}`), join(webDestination, entry.file));
+    const source = inside(webSource, join(webSource, entry.file), `web asset ${entry.file}`);
+    if (entry.crc !== undefined) {
+      assert(Number.isSafeInteger(entry.crc) && entry.crc >= 0 && entry.crc <= 0xFFFFFFFF,
+        `web asset ${entry.file} CRC is invalid`);
+      assert(crc32(readFileSync(source)) === entry.crc,
+        `web asset ${entry.file} CRC does not match its compressed bytes`);
+    }
+    copyFile(source, join(webDestination, entry.file));
   }
 
   // Packs: normalize the upstream layout (English files at the game root,
@@ -159,14 +175,21 @@ try {
   // every selected locale explicit in the reviewed content manifest and prevents
   // a newly added translation directory from being silently omitted.
   const contentContract = readJson(join(root, 'tools', 'content-manifest.json'));
+  assert(contentContract.schema === 2, 'content manifest schema must be 2');
   const allowedPackDirectories = new Set(contentContract.games.filter((game) => game.packDirectory).map((game) => game.packDirectory));
   const languageCodes = contentContract.languages.map((language) => language.code);
   assert(languageCodes.length > 0 && languageCodes[0] === 'en' && new Set(languageCodes).size === languageCodes.length,
     'content manifest languages must be unique and begin with en');
   for (const language of contentContract.languages) {
+    assert(Object.keys(language).every((key) => ['code', 'label', 'root', 'fallback'].includes(key)),
+      `language ${language.code ?? '<missing>'} has unknown fields`);
     assert(/^[a-z]{2}(?:-[a-z]{2})?$/.test(language.code), `unsafe language code ${language.code}`);
     assert(language.root === `vendor/packs/${language.code}`,
       `language ${language.code} must use vendor/packs/${language.code}`);
+    if (language.fallback !== undefined)
+      assert(languageCodes.includes(language.fallback) &&
+        languageCodes.indexOf(language.fallback) < languageCodes.indexOf(language.code),
+      `language ${language.code} fallback must be a preceding language`);
   }
   const packsSource = join(extracted, 'packs');
   const packEntries = readdirSync(packsSource, { withFileTypes: true });
@@ -179,6 +202,8 @@ try {
   }
   const packsDestination = join(stagedVendor, 'packs');
   mkdirSync(packsDestination);
+  for (const language of languageCodes)
+    mkdirSync(join(packsDestination, language), { recursive: true });
   for (const directory of [...allowedPackDirectories].sort()) {
     const gameSource = join(packsSource, directory);
     const entries = readdirSync(gameSource, { withFileTypes: true });
@@ -197,16 +222,20 @@ try {
       translationDirectories.set(entry.name, join(gameSource, entry.name));
     }
     assert(englishFiles.length > 0, `upstream pack directory ${directory} has no English packs`);
-    for (const language of languageCodes) {
-      const sourceDirectory = language === 'en' ? gameSource : translationDirectories.get(language);
-      assert(sourceDirectory, `upstream is missing ${directory}/${language}`);
-      const files = language === 'en' ? englishFiles : readdirSync(sourceDirectory, { withFileTypes: true }).map((entry) => {
+    for (const language of contentContract.languages) {
+      const sourceDirectory = language.code === 'en' ? gameSource : translationDirectories.get(language.code);
+      if (!sourceDirectory) {
+        assert(language.fallback,
+          `upstream is missing ${directory}/${language.code} and the manifest has no fallback`);
+        continue;
+      }
+      const files = language.code === 'en' ? englishFiles : readdirSync(sourceDirectory, { withFileTypes: true }).map((entry) => {
         assert(entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*\.txt$/i.test(entry.name),
-          `unsafe upstream pack entry ${directory}/${language}/${entry.name}`);
+          `unsafe upstream pack entry ${directory}/${language.code}/${entry.name}`);
         return entry.name;
       });
-      assert(files.length > 0, `upstream pack directory ${directory}/${language} is empty`);
-      const destination = join(packsDestination, language, directory);
+      assert(files.length > 0, `upstream pack directory ${directory}/${language.code} is empty`);
+      const destination = join(packsDestination, language.code, directory);
       mkdirSync(destination, { recursive: true });
       for (const file of files.sort()) copyFile(join(sourceDirectory, file), join(destination, file));
     }
