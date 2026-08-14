@@ -12,6 +12,7 @@
 #include "ha_metadata.h"
 #include "ha_diagnostics.h"
 #include "ha_network_policy.h"
+#include "ha_ui_text.h"
 
 // ---- implemented in the .ino (they touch the engine / WiFi under the lock) ----
 void haHostSelectGame(uint8_t game);
@@ -35,9 +36,18 @@ using HaGameItem = HaGeneratedGame;
 static const int HA_UI_GAME_COUNT = (int)HA_GENERATED_GAME_COUNT;
 
 static const char* haUiGameLabel(uint8_t id) {
-    for(int i = 0; i < HA_UI_GAME_COUNT; i++)
-        if(HA_UI_GAMES[i].id == id) return HA_UI_GAMES[i].label;
-    return "None";
+    for(int i = 0; i < HA_UI_GAME_COUNT; i++) {
+        if(HA_UI_GAMES[i].id == id)
+            return haUiGameLabelForLocale(
+                HA_UI_GAMES[i].key,
+                HA_UI_GAMES[i].label,
+                haUiActiveLocale());
+    }
+    return haUiT(HaUiTextNone);
+}
+
+static const char* haUiGameDesc(const HaGameItem& game) {
+    return haUiGameDescForLocale(game.key, game.desc, haUiActiveLocale());
 }
 
 enum HaUiView {
@@ -61,8 +71,9 @@ extern uint8_t haAudioLevel;
 
 // Content language, selected once in Settings. The firmware bakes every language's
 // packs; the host streams only the selected one (English fallback per game). haLang
-// indexes the tables below; the .ino owns the variable, persists it, and re-streams
-// the packs when haLangDirty is set. Interface text stays English for now.
+// indexes the generated tables below; the .ino owns the variable, persists it, and
+// re-streams the packs when haLangDirty is set. Host text uses the same language,
+// with English fallback for every language other than German.
 extern uint8_t haLang;
 extern bool haLangDirty; // set by Settings; the .ino reloads packs and clears it
 #define HA_LANG_COUNT ((int)HA_GENERATED_LANGUAGE_COUNT)
@@ -253,7 +264,7 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
 
     // Party admission code is the most prominent host value.
     g->setTextColor(HA_ORANGE, TFT_BLACK);
-    g->drawString("JOIN", 3, 30);
+    g->drawString(haUiT(HaUiTextJoin), 3, 30);
     g->setTextSize(2);
     g->drawString(haHostJoinCode(), 31, 25);
     g->setTextSize(1);
@@ -265,23 +276,24 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
         if(haUiSnap.session[i].used && haUiSnap.session[i].connected) online++;
     int offline = haUiSnap.sessionCount > online ? haUiSnap.sessionCount - online : 0;
     const char* storage = !haSdOk ? "NVS" :
-                          (haHistStorageReady() ? "SD OK" : "SD ERR");
+                          (haHistStorageReady() ? haUiT(HaUiTextStorageSdOk)
+                                                : haUiT(HaUiTextStorageSdError));
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    snprintf(line, sizeof(line), "%s  %d on/%d off", storage, online, offline);
+    snprintf(line, sizeof(line), haUiT(HaUiTextPresenceFormat), storage, online, offline);
     g->drawString(line, 132, 30);
-    snprintf(line, sizeof(line), "Game: %s", haUiGameLabel(haUiSnap.activeGame));
+    snprintf(line, sizeof(line), haUiT(HaUiTextGameFormat), haUiGameLabel(haUiSnap.activeGame));
     g->drawString(line, 3, 45);
 
     g->drawFastHLine(0, 56, HA_UI_W, TFT_DARKGREY);
 
     if(n == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("waiting for phones to join...", 3, 63);
+        g->drawString(haUiT(HaUiTextWaitingForPhones), 3, 63);
     } else {
         haUiDrawScoreCols(g, order, n, 60, 5); // 2 columns x 5 = up to 10
         if(n > 10) {
             g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-            snprintf(line, sizeof(line), "+%d more", n - 10);
+            snprintf(line, sizeof(line), haUiT(HaUiTextMoreFormat), n - 10);
             g->drawString(line, 3, HA_UI_H - 22);
         }
     }
@@ -292,7 +304,7 @@ static void haUiDrawDash(lgfx::LovyanGFX* g) {
         g->setTextColor(HA_ORANGE, TFT_BLACK);
         g->drawString(haUiSnap.lastEvent, 3, HA_UI_H - 22);
     }
-    haUiFooter(g, "G game L board H history D diagnostics");
+    haUiFooter(g, haUiT(HaUiTextDashboardFooter));
 }
 
 #define HA_GAMES_ROW 16 // px per game row at text size 2
@@ -314,10 +326,11 @@ static void haUiComputeGamesOrder() {
                 uint16_t right = haHostGamePlayCount(haUiSnap, HA_UI_GAMES[k].id);
                 swap = left < right ||
                        (left == right &&
-                        strcmp(HA_UI_GAMES[haGamesOrder[j]].label,
-                               HA_UI_GAMES[k].label) > 0);
+                        strcmp(haUiGameLabel(HA_UI_GAMES[haGamesOrder[j]].id),
+                               haUiGameLabel(HA_UI_GAMES[k].id)) > 0);
             } else {
-                swap = strcmp(HA_UI_GAMES[haGamesOrder[j]].label, HA_UI_GAMES[k].label) > 0;
+                swap = strcmp(haUiGameLabel(HA_UI_GAMES[haGamesOrder[j]].id),
+                              haUiGameLabel(HA_UI_GAMES[k].id)) > 0;
             }
             if(!swap) break;
             haGamesOrder[j + 1] = haGamesOrder[j];
@@ -332,7 +345,11 @@ static void haUiComputeGamesOrder() {
 static void haUiDrawGames(lgfx::LovyanGFX* g) {
     haUiComputeGamesOrder();
     char title[32];
-    snprintf(title, sizeof(title), "GAMES - %s", haGameSort == 1 ? "MOST PLAYED" : "A-Z");
+    snprintf(
+        title,
+        sizeof(title),
+        haUiT(HaUiTextGamesTitleFormat),
+        haGameSort == 1 ? haUiT(HaUiTextMostPlayed) : "A-Z");
     haUiHeader(g, title);
 
     int descY = HA_UI_H - 22;
@@ -349,8 +366,8 @@ static void haUiDrawGames(lgfx::LovyanGFX* g) {
         bool live = (it.id == haUiSnap.activeGame);
         if(sel) g->fillRect(0, y - 1, HA_UI_W, HA_GAMES_ROW, HA_ORANGE);
         g->setTextColor(sel ? TFT_BLACK : (live ? HA_ORANGE : TFT_WHITE), sel ? HA_ORANGE : TFT_BLACK);
-        char nm[18];
-        snprintf(nm, sizeof(nm), "%s%s", live ? "*" : "", it.label);
+        char nm[24];
+        snprintf(nm, sizeof(nm), "%s%s", live ? "*" : "", haUiGameLabel(it.id));
         g->drawString(nm, 3, y);
         if(it.duel) {
             g->setTextSize(1);
@@ -365,38 +382,38 @@ static void haUiDrawGames(lgfx::LovyanGFX* g) {
     // Selected game's one-line description.
     g->fillRect(0, descY - 2, HA_UI_W, 12, TFT_BLACK);
     g->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    g->drawString(HA_UI_GAMES[haGamesOrder[haUiCursor]].desc, 3, descY);
+    g->drawString(haUiGameDesc(HA_UI_GAMES[haGamesOrder[haUiCursor]]), 3, descY);
 
-    haUiFooter(g, ";/. move  S sort  ENTER pick  ESC back");
+    haUiFooter(g, haUiT(HaUiTextGamesFooter));
 }
 
 // The leaderboard is the cumulative host session, including temporarily offline
 // players. Opening it requests a durable checkpoint; R archives it before reset.
 static void haUiDrawBoard(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "SESSION LEADERBOARD");
+    haUiHeader(g, haUiT(HaUiTextSessionLeaderboard));
     uint8_t order[HA_SESSION_MAX_PLAYERS];
     int n = haUiSortedSession(order);
     if(n == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("no players yet", 3, 18);
+        g->drawString(haUiT(HaUiTextNoPlayers), 3, 18);
     } else {
         haUiDrawSessionRows(g, order, n);
     }
-    haUiFooter(g, haSdOk ? ";/. scroll R new session ESC" : ";/. scroll R reset (no SD)");
+    haUiFooter(g, haUiT(haSdOk ? HaUiTextBoardFooterSd : HaUiTextBoardFooterNoSd));
 }
 
 static void haUiDrawHistory(lgfx::LovyanGFX* g) {
     char title[32];
     uint32_t total = haHistStorageReady() ? haHist.total : 0;
-    snprintf(title, sizeof(title), "HISTORY - %lu", (unsigned long)total);
+    snprintf(title, sizeof(title), haUiT(HaUiTextHistoryTitleFormat), (unsigned long)total);
     haUiHeader(g, title);
     if(!haSdOk) {
         g->setTextColor(TFT_RED, TFT_BLACK);
-        g->drawString("microSD unavailable", 3, 20);
+        g->drawString(haUiT(HaUiTextMicroSdUnavailable), 3, 20);
     } else if(!haHistStorageReady() || !haHist.count) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("no archived sessions", 3, 20);
-        g->drawString("R on the leaderboard starts one", 3, 32);
+        g->drawString(haUiT(HaUiTextNoArchivedSessions), 3, 20);
+        g->drawString(haUiT(HaUiTextHistoryEmptyHint), 3, 32);
     } else {
         if(haUiCursor < 0) haUiCursor = 0;
         if(haUiCursor >= haHist.count) haUiCursor = haHist.count - 1;
@@ -420,13 +437,17 @@ static void haUiDrawHistory(lgfx::LovyanGFX* g) {
             g->drawString(score, HA_UI_W - 6 * (int)strlen(score) - 3, y + 1);
         }
     }
-    haUiFooter(g, ";/. move ,// page ENTER view ESC");
+    haUiFooter(g, haUiT(HaUiTextHistoryFooter));
 }
 
 static void haUiDrawHistoryDetail(lgfx::LovyanGFX* g) {
     if(!haUiHistDetailStorage) return;
     char title[32];
-    snprintf(title, sizeof(title), "SESSION #%lu", (unsigned long)haUiHistDetail.num);
+    snprintf(
+        title,
+        sizeof(title),
+        haUiT(HaUiTextSessionTitleFormat),
+        (unsigned long)haUiHistDetail.num);
     haUiHeader(g, title);
     const int rows = 9;
     int maxScroll = haUiHistDetail.count > rows ? haUiHistDetail.count - rows : 0;
@@ -444,57 +465,62 @@ static void haUiDrawHistoryDetail(lgfx::LovyanGFX* g) {
     }
     haUiFooter(
         g,
-        haHistCanRestore() ? ";/. scroll Y restore ESC" : ";/. scroll ESC (restore offline)");
+        haUiT(haHistCanRestore() ? HaUiTextHistoryDetailFooter
+                                 : HaUiTextHistoryDetailOfflineFooter));
 }
 
 static void haUiDrawHistoryRestore(lgfx::LovyanGFX* g) {
     if(!haUiHistDetailStorage) return;
-    haUiHeader(g, "RESTORE SESSION?");
+    haUiHeader(g, haUiT(HaUiTextRestoreSessionTitle));
     g->setTextSize(2);
     g->setTextColor(HA_ORANGE, TFT_BLACK);
     char line[28];
-    snprintf(line, sizeof(line), "Session #%lu", (unsigned long)haUiHistDetail.num);
+    snprintf(
+        line,
+        sizeof(line),
+        haUiT(HaUiTextSessionNumberFormat),
+        (unsigned long)haUiHistDetail.num);
     g->drawString(line, 10, 26);
     g->setTextSize(1);
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    g->drawString("Current play is archived first.", 10, 55);
-    g->drawString("Phones reconnect to restored scores.", 10, 67);
+    g->drawString(haUiT(HaUiTextCurrentPlayArchivedFirst), 10, 55);
+    g->drawString(haUiT(HaUiTextPhonesReconnectScores), 10, 67);
     if(haUiRestoreFailed) {
         g->setTextColor(TFT_RED, TFT_BLACK);
-        g->drawString("Restore failed; active play unchanged.", 10, 83);
+        g->drawString(haUiT(HaUiTextRestoreFailed), 10, 83);
     }
-    haUiFooter(g, "Y confirm   ESC cancel");
+    haUiFooter(g, haUiT(HaUiTextConfirmCancelFooter));
 }
 
 static void haUiDrawResetConfirm(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "NEW SESSION?");
+    haUiHeader(g, haUiT(HaUiTextNewSessionTitle));
     g->setTextSize(2);
     g->setTextColor(HA_ORANGE, TFT_BLACK);
-    g->drawString("Archive scores", 12, 28);
+    g->drawString(haUiT(HaUiTextArchiveScores), 12, 28);
     g->setTextSize(1);
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    g->drawString("Then reset cumulative session scores.", 12, 57);
+    g->drawString(haUiT(HaUiTextResetCumulativeScores), 12, 57);
     if(!haSdOk) {
         g->setTextColor(TFT_RED, TFT_BLACK);
-        g->drawString("No SD: this session cannot be archived.", 12, 73);
+        g->drawString(haUiT(HaUiTextNoSdCannotArchive), 12, 73);
     }
-    haUiFooter(g, "Y confirm   ESC cancel");
+    haUiFooter(g, haUiT(HaUiTextConfirmCancelFooter));
 }
 
 static void haUiDrawResetDiscardConfirm(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "ARCHIVE FAILED");
+    haUiHeader(g, haUiT(HaUiTextArchiveFailedTitle));
     g->setTextSize(2);
     g->setTextColor(TFT_RED, TFT_BLACK);
-    g->drawString("Discard scores?", 12, 25);
+    g->drawString(haUiT(HaUiTextDiscardScores), 12, 25);
     g->setTextSize(1);
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    g->drawString("The active session could not be archived.", 8, 54);
-    g->drawString("A second Y permanently discards it.", 8, 67);
+    g->drawString(haUiT(HaUiTextActiveCouldNotArchive), 8, 54);
+    g->drawString(haUiT(HaUiTextSecondYDiscards), 8, 67);
     if(haUiResetFailed) {
         g->setTextColor(TFT_RED, TFT_BLACK);
-        g->drawString("Reset failed; active play is unchanged.", 8, 83);
+        g->drawString(haUiT(HaUiTextResetFailed), 8, 83);
     }
-    haUiFooter(g, "Y DISCARD   ESC keep session");
+    haUiFooter(g, haUiT(HaUiTextDiscardFooter));
 }
 
 // One option of a multi-choice setting (audio off/low/high, AP on/off). The current
@@ -539,11 +565,16 @@ static void haUiValPill(lgfx::LovyanGFX* g, int x, int y, const char* txt, bool 
 }
 
 static void haUiDrawSettings(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "SETTINGS");
+    haUiHeader(g, haUiT(HaUiTextSettingsTitle));
     g->setTextSize(1);
     const int VALX = 92, y0 = 16, rowH = 17;
     const char* labels[HA_SET_COUNT] = {
-        "SSID", "Audio", "Language", "Access Point", "Event log", "Diagnostics"};
+        "SSID",
+        "Audio",
+        haUiT(HaUiTextSettingLanguage),
+        haUiT(HaUiTextSettingAccessPoint),
+        haUiT(HaUiTextSettingEventLog),
+        haUiT(HaUiTextSettingDiagnostics)};
     for(int i = 0; i < HA_SET_COUNT; i++) {
         bool sel = (i == haUiCursor);
         int y = y0 + i * rowH;
@@ -558,7 +589,10 @@ static void haUiDrawSettings(lgfx::LovyanGFX* g) {
             break;
         }
         case 1: { // Audio -- off / low / high
-            const char* o[3] = {"off", "low", "high"};
+            const char* o[3] = {
+                haUiT(HaUiTextAudioOff),
+                haUiT(HaUiTextAudioLow),
+                haUiT(HaUiTextAudioHigh)};
             for(int a = 0; a < 3; a++) cx = haUiOptPill(g, cx, y, o[a], haAudioLevel == a, sel);
             break;
         }
@@ -567,69 +601,69 @@ static void haUiDrawSettings(lgfx::LovyanGFX* g) {
             break;
         case 3: { // Access Point -- on / off
             bool up = haUiSnap.portalRunning;
-            cx = haUiOptPill(g, cx, y, "on", up, sel);
-            cx = haUiOptPill(g, cx, y, "off", !up, sel);
+            cx = haUiOptPill(g, cx, y, haUiT(HaUiTextOn), up, sel);
+            cx = haUiOptPill(g, cx, y, haUiT(HaUiTextOff), !up, sel);
             break;
         }
         case 4: // Event log -- opens a sub-screen
-            haUiValPill(g, cx, y, "GO >", sel, false);
+            haUiValPill(g, cx, y, haUiT(HaUiTextGo), sel, false);
             break;
         case 5: // Diagnostics -- opens a sub-screen
-            haUiValPill(g, cx, y, "GO >", sel, false);
+            haUiValPill(g, cx, y, haUiT(HaUiTextGo), sel, false);
             break;
         }
     }
-    haUiFooter(g, ";/. move   ,// change   ENTER open   ESC back");
+    haUiFooter(g, haUiT(HaUiTextSettingsFooter));
 }
 
 static void haUiDrawDiagnostics(lgfx::LovyanGFX* g) {
     HaDiagnostics d{};
     haHostDiagnosticsSnapshot(d);
-    haUiHeader(g, "DIAGNOSTICS");
+    haUiHeader(g, haUiT(HaUiTextDiagnosticsTitle));
     g->setTextColor(TFT_WHITE, TFT_BLACK);
     char line[48];
-    snprintf(line, sizeof(line), "device %s (board %u)",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagDeviceFormat),
              haDeviceName(d.deviceKind),
              (unsigned)d.boardId);
     g->drawString(line, 3, 15);
-    snprintf(line, sizeof(line), "heap %lu min %lu block %lu",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagHeapFormat),
              (unsigned long)d.freeHeap,
              (unsigned long)d.minFreeHeap,
              (unsigned long)d.largestFreeBlock);
     g->drawString(line, 3, 27);
-    snprintf(line, sizeof(line), "ws %u auth %u pending %u qmax %u",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagWsFormat),
              (unsigned)d.wsObjects,
              (unsigned)d.wsAuthenticated,
              (unsigned)d.wsPending,
              (unsigned)d.maxSocketQueue);
     g->drawString(line, 3, 39);
-    snprintf(line, sizeof(line), "rate ctl %lu draw %lu chat %lu emoji %lu",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagRateFormat),
              (unsigned long)d.rateRejected[HaInboundGeneral],
              (unsigned long)d.rateRejected[HaInboundDraw],
              (unsigned long)d.rateRejected[HaInboundChat],
              (unsigned long)d.rateRejected[HaInboundEmoji]);
     g->drawString(line, 3, 51);
-    snprintf(line, sizeof(line), "flow coalesce %lu drop %lu close %lu",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagFlowFormat),
              (unsigned long)d.outputCoalesced,
              (unsigned long)d.streamDropped,
              (unsigned long)d.overloadCloses);
     g->drawString(line, 3, 63);
-    snprintf(line, sizeof(line), "loop %lums lock %luus sound drop %lu",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagLoopFormat),
              (unsigned long)d.maxLoopGapMs,
              (unsigned long)d.maxEngineLockUs,
              (unsigned long)d.soundDropped);
     g->drawString(line, 3, 75);
-    snprintf(line, sizeof(line), "SD failures %lu checkpoint %lu",
+    snprintf(line, sizeof(line), haUiT(HaUiTextDiagSdFormat),
              (unsigned long)d.sdFailures,
              (unsigned long)d.checkpointGeneration);
     g->drawString(line, 3, 87);
     g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    g->drawString("High-water marks since boot.", 3, 103);
-    haUiFooter(g, "ESC back");
+    g->drawString(haUiT(HaUiTextHighWaterMarks), 3, 103);
+    haUiFooter(g, haUiT(HaUiTextBackFooter));
 }
 
 static void haUiDrawConsole(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "EVENT LOG");
+    haUiHeader(g, haUiT(HaUiTextEventLogTitle));
     int rows = 11;
     uint32_t total = haUiSnap.evTotal;
     uint32_t have = total < HA_EV_MAX ? total : HA_EV_MAX;
@@ -648,31 +682,31 @@ static void haUiDrawConsole(lgfx::LovyanGFX* g) {
     }
     if(have == 0) {
         g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-        g->drawString("nothing yet", 3, 16);
+        g->drawString(haUiT(HaUiTextNothingYet), 3, 16);
     }
-    haUiFooter(g, "; older  . newer  ,// page  ESC");
+    haUiFooter(g, haUiT(HaUiTextEventLogFooter));
 }
 
 static void haUiDrawSsid(lgfx::LovyanGFX* g) {
-    haUiHeader(g, "AP NAME");
+    haUiHeader(g, haUiT(HaUiTextApNameTitle));
     g->setTextColor(TFT_WHITE, TFT_BLACK);
-    g->drawString("Type a new SSID:", 3, 20);
+    g->drawString(haUiT(HaUiTextTypeNewSsid), 3, 20);
     g->fillRect(3, 34, HA_UI_W - 6, 14, TFT_DARKGREY);
     g->setTextColor(TFT_WHITE, TFT_DARKGREY);
     char shown[40];
     snprintf(shown, sizeof(shown), "%s_", haUiEdit);
     g->drawString(shown, 6, 37);
     g->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    g->drawString("Applying restarts the access point,", 3, 58);
-    g->drawString("which drops every connected phone.", 3, 68);
-    haUiFooter(g, "ENTER apply   DEL erase   ESC cancel");
+    g->drawString(haUiT(HaUiTextApplyingRestartsAp), 3, 58);
+    g->drawString(haUiT(HaUiTextDropsConnectedPhones), 3, 68);
+    haUiFooter(g, haUiT(HaUiTextSsidFooter));
 }
 
 static void haUiDraw(bool snapshot = true) {
     if(!haUiSnapStorage || !haHostStorage) {
         M5Cardputer.Display.fillScreen(TFT_BLACK);
         M5Cardputer.Display.setTextColor(TFT_RED, TFT_BLACK);
-        M5Cardputer.Display.drawString("UI memory unavailable", 3, 20);
+        M5Cardputer.Display.drawString(haUiT(HaUiTextMemoryUnavailable), 3, 20);
         return;
     }
     if(snapshot) haHostSnapshot(haUiSnap);
@@ -786,8 +820,13 @@ static void haUiSettingAdjust(int dir) {
     {
         uint8_t previous = haLang;
         haLang = (uint8_t)((haLang + HA_LANG_COUNT + dir) % HA_LANG_COUNT);
-        if(haCfgSave()) haLangDirty = true;
-        else haLang = previous;
+        if(haCfgSave()) {
+            haUiSetLocaleFromLanguage(haLang);
+            haLangDirty = true;
+        } else {
+            haLang = previous;
+            haUiSetLocaleFromLanguage(haLang);
+        }
         break;
     }
     case 3: // Access Point on/off
@@ -1011,8 +1050,13 @@ static void haUiEnter() {
         {
             uint8_t previous = haLang;
             haLang = (uint8_t)((haLang + 1) % HA_LANG_COUNT);
-            if(haCfgSave()) haLangDirty = true;
-            else haLang = previous;
+            if(haCfgSave()) {
+                haUiSetLocaleFromLanguage(haLang);
+                haLangDirty = true;
+            } else {
+                haLang = previous;
+                haUiSetLocaleFromLanguage(haLang);
+            }
             break;
         }
         case 3: // AP -> toggle

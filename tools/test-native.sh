@@ -18,11 +18,13 @@ fi
 CLANG="${CXX:-clang++}"
 
 if [ "${1:-}" = "--tsan" ]; then
-  "$CLANG" -std=c++17 -Wall -Wextra -Werror -pedantic -pthread \
-    -fsanitize=thread -fno-omit-frame-pointer \
-    -Itests/native/include -Ihotspot-arcade-cardputer \
-    tests/native/test_async_queue.cpp -o .cache/native/test_async_queue_tsan
-  .cache/native/test_async_queue_tsan
+  for name in test_async_queue test_ui_text_concurrency; do
+    "$CLANG" -std=c++17 -Wall -Wextra -Werror -pedantic -pthread \
+      -fsanitize=thread -fno-omit-frame-pointer \
+      -Itests/native/include -Ihotspot-arcade-cardputer \
+      "tests/native/${name}.cpp" -o ".cache/native/${name}_tsan"
+    ".cache/native/${name}_tsan"
+  done
   exit 0
 fi
 
@@ -44,5 +46,7 @@ build_and_run test_ssid_transaction
 build_and_run test_network_policy
 build_and_run test_ws_flow_policy
 build_and_run test_event_format
+build_and_run test_ui_text
+build_and_run test_ui_text_concurrency
 build_and_run test_async_queue
 build_and_run test_device

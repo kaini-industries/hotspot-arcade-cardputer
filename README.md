@@ -161,7 +161,10 @@ The fifteen phone-driven games are Trivia, Would You Rather, Word Scramble,
 Spectrum, Kiss Marry Kill, Reaction Duel, Connect Four, Tic-Tac-Toe, Dots & Boxes,
 Reversi, Draw and Guess, Pong, Guess the Color, Battleship, and Chess. Content and
 phone UI are available in English, German, and the currently supplied Portuguese
-Brazil packs, with per-game English fallback where a translation is absent.
+Brazil packs, with per-game English fallback where a translation is absent. The
+Cardputer host interface follows the German setting across its dashboard, menus,
+history, diagnostics, event/status text, and generated game metadata. Other host
+interface languages fall back to English.
 
 ## Developer setup
 

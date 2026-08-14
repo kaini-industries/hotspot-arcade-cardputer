@@ -15,6 +15,7 @@
 #include <limits.h>
 #include <new>
 #include "ha_metadata.h"
+#include "ha_ui_text.h"
 
 #ifndef HA_MAX_PLAYERS
 #define HA_MAX_PLAYERS 10
@@ -271,7 +272,12 @@ static inline bool haHostJoinStable(
     strlcpy(live.nick, safeNick, sizeof(live.nick));
 
     char line[HA_EV_LEN];
-    snprintf(line, sizeof(line), "%s %s", isConnection ? "JOIN" : "NAME", safeNick);
+    snprintf(
+        line,
+        sizeof(line),
+        "%s %s",
+        haUiT(isConnection ? HaUiTextEventJoin : HaUiTextEventName),
+        safeNick);
     haHostLog(line);
     return isConnection;
 }
@@ -288,7 +294,12 @@ static inline bool haHostJoin(uint8_t pid, const char* nick) {
 static inline void haHostLeave(uint8_t pid) {
     if(pid < 1 || pid > HA_MAX_PLAYERS || !haHost.p[pid].used) return;
     char line[HA_EV_LEN];
-    snprintf(line, sizeof(line), "LEAVE %s", haHost.p[pid].nick);
+    snprintf(
+        line,
+        sizeof(line),
+        "%s %s",
+        haUiT(HaUiTextEventLeave),
+        haHost.p[pid].nick);
     uint8_t si = haHost.p[pid].sessionIndex;
     if(si < HA_SESSION_MAX_PLAYERS && haHost.session[si].used) {
         haHost.session[si].connected = false;
