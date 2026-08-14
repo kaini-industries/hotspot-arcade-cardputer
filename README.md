@@ -184,8 +184,8 @@ tools/build.sh
 what CI uses for the locked Linux x64 Node archive.
 
 `.nvmrc` and `tools/toolchain.lock.json` pin Node 24.19.0, Arduino CLI 1.5.1,
-ESP32 core 3.3.11, esptool 5.3.1, Emscripten 6.0.2, actionlint 1.7.12,
-Syft 1.50.0, Cosign 3.0.6, the CI GitHub CLI 2.93.0, M5Cardputer 1.1.1,
+ESP32 core 3.3.11, esptool 5.3.1, Emscripten 6.0.6, actionlint 1.7.12,
+Syft 1.51.0, Cosign 3.1.3, the CI GitHub CLI 2.97.0, M5Cardputer 1.1.1,
 M5Unified 0.2.19, M5GFX 0.2.26, every resolved transitive Arduino dependency,
 and downloaded archive hashes. Arduino data and downloads stay inside
 `.cache/arduino`; bootstrapped host tools stay under `.tools`. Syft and Cosign are
