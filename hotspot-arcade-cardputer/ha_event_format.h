@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "ha_proto.h"
+#include "ha_ui_text.h"
 
 enum HaHostEventDisposition : uint8_t {
     HaHostEventIgnored = 0,
@@ -22,7 +23,8 @@ static inline HaHostEventDisposition haFormatHostEvent(
     int16_t value,
     const char* text,
     char* output,
-    size_t capacity) {
+    size_t capacity,
+    HaUiLocale locale = HaUiEnglish) {
     if(!output || !capacity) return HaHostEventIgnored;
     output[0] = '\0';
     const char* game = gameName ? gameName : "Arcade";
@@ -32,32 +34,79 @@ static inline HaHostEventDisposition haFormatHostEvent(
     HaHostEventDisposition disposition = HaHostEventStatus;
     switch(kind) {
     case HA_HOST_EVT_MATCH_STARTED:
-        snprintf(output, capacity, "%s: %s vs %s", game, actor, target);
+        snprintf(
+            output,
+            capacity,
+            haUiTextForLocale(HaUiTextMatchStartedFormat, locale),
+            game,
+            actor,
+            target);
         break;
     case HA_HOST_EVT_CHAT:
         snprintf(output, capacity, "%s: %s", actor, detail);
         disposition = HaHostEventLog;
         break;
     case HA_HOST_EVT_ROLE:
-        snprintf(output, capacity, "%s: %s %s", game, actor, detail);
+        snprintf(
+            output,
+            capacity,
+            haUiTextForLocale(HaUiTextRoleFormat, locale),
+            game,
+            actor,
+            detail);
         break;
     case HA_HOST_EVT_ROUND_WIN:
         if(detail[0])
-            snprintf(output, capacity, "%s: %s beat %s (%s)", game, actor, target, detail);
+            snprintf(
+                output,
+                capacity,
+                haUiTextForLocale(HaUiTextRoundWinDetailFormat, locale),
+                game,
+                actor,
+                target,
+                detail);
         else
-            snprintf(output, capacity, "%s: %s beat %s", game, actor, target);
+            snprintf(
+                output,
+                capacity,
+                haUiTextForLocale(HaUiTextRoundWinFormat, locale),
+                game,
+                actor,
+                target);
         break;
     case HA_HOST_EVT_ROUND_DRAW:
         if(detail[0])
-            snprintf(output, capacity, "%s: %s / %s draw (%s)", game, actor, target, detail);
+            snprintf(
+                output,
+                capacity,
+                haUiTextForLocale(HaUiTextRoundDrawDetailFormat, locale),
+                game,
+                actor,
+                target,
+                detail);
         else
-            snprintf(output, capacity, "%s: %s / %s draw", game, actor, target);
+            snprintf(
+                output,
+                capacity,
+                haUiTextForLocale(HaUiTextRoundDrawFormat, locale),
+                game,
+                actor,
+                target);
         break;
     case HA_HOST_EVT_ROUND_COMPLETE:
-        snprintf(output, capacity, "%s: round %d complete", game, (int)value);
+        snprintf(
+            output,
+            capacity,
+            haUiTextForLocale(HaUiTextRoundCompleteFormat, locale),
+            game,
+            (int)value);
         break;
     case HA_HOST_EVT_GAME_FINAL:
-        snprintf(output, capacity, "%s: game complete", game);
+        snprintf(
+            output,
+            capacity,
+            haUiTextForLocale(HaUiTextGameCompleteFormat, locale),
+            game);
         break;
     default:
         return HaHostEventIgnored;

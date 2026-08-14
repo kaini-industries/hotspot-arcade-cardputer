@@ -44,5 +44,6 @@ build_and_run test_ssid_transaction
 build_and_run test_network_policy
 build_and_run test_ws_flow_policy
 build_and_run test_event_format
+build_and_run test_ui_text
 build_and_run test_async_queue
 build_and_run test_device

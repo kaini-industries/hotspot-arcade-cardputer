@@ -183,6 +183,8 @@ card containing unrelated data.
 | --- | --- | --- | --- |
 | English, German, and supplied Portuguese-Brazil content load with expected fallback | | | |
 | Existing and resumed phones receive every locale change | | | |
+| German localizes every host menu, history/restore/diagnostics screen, game label, and status message; Portuguese host text falls back to English | | | |
+| All 24 event-log entries remain scrollable in both English and German; ASCII German spellings render without missing glyphs | | | |
 | Changing locale ends only the current round and preserves per-game/cumulative score contracts | | | |
 | 500 language/game cycles complete | | | |
 | Post-warm-up heap degradation after 500 cycles is under 5% | | | |

@@ -64,8 +64,9 @@
 // 0 = off, 1 = low, 2 = high. Stored here; the UI settings screen changes it.
 uint8_t haAudioLevel = 1;
 
-// Content language (see ha_ui.h): 0 English, 1 Deutsch. Persisted in NVS. The Settings
-// screen changes it and sets haLangDirty; loop() then re-streams the packs.
+// Generated content/host language index (see ha_ui.h). Persisted in NVS. The
+// Settings screen changes it and sets haLangDirty; loop() then re-streams packs and
+// the host UI resolves German by language code, with English fallback otherwise.
 uint8_t haLang = 0;
 bool haLangDirty = false;
 static uint8_t haLoadedLang = 0;
@@ -541,8 +542,13 @@ static const char* haNick(int pid) {
 }
 
 static const char* haGameName(uint8_t game) {
-    for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++)
-        if(HA_GENERATED_GAMES[i].id == game) return HA_GENERATED_GAMES[i].label;
+    for(size_t i = 0; i < HA_GENERATED_GAME_COUNT; i++) {
+        if(HA_GENERATED_GAMES[i].id == game)
+            return haUiGameLabelForLocale(
+                HA_GENERATED_GAMES[i].key,
+                HA_GENERATED_GAMES[i].label,
+                haUiActiveLocale());
+    }
     return "Arcade";
 }
 
@@ -565,7 +571,8 @@ void haUartHostEvent(
         value,
         text,
         line,
-        sizeof(line));
+        sizeof(line),
+        haUiActiveLocale());
     if(disposition == HaHostEventLog) {
         haHostLog(line);
         return;
@@ -768,7 +775,7 @@ static bool startPortalTransport() {
 
     ENGINE_LOCK();
     haHost.portalRunning = true;
-    haHostLog("AP up");
+    haHostLog(haUiT(HaUiTextEventApUp));
     ENGINE_UNLOCK();
     haJingleUp();
     Serial.printf("[ha] AP \"%s\" up at %s\n", apName, WiFi.softAPIP().toString().c_str());
@@ -793,7 +800,7 @@ static void haPortalResume(bool expireDetachedNow = false) {
     // the ordinary path, which starts the normal two-minute grace for anyone the
     // host chose not to wait for.
     engine.transportResume(now, expireDetachedNow);
-    haHostLog("session resumed");
+    haHostLog(haUiT(HaUiTextEventSessionResumed));
     haApState = HaApRunning;
     haApRequiredClear(haApRequiredRoster);
     haApReconnectStartedMs = 0;
@@ -818,7 +825,7 @@ static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) 
         reconnectSsid ? reconnectSsid : apName,
         HA_AP_RECONNECT_WINDOW_MS);
     engine.transportPause(millis());
-    haHostLog("session paused");
+    haHostLog(haUiT(HaUiTextEventSessionPaused));
     haPersistenceMarkDirty();
     ENGINE_UNLOCK();
 
@@ -831,7 +838,7 @@ static bool haPortalPauseAndStop(const char* reason, const char* reconnectSsid) 
     ENGINE_LOCK();
     haHostSuspendConnections();
     haHost.portalRunning = false;
-    haHostLog("AP stopped");
+    haHostLog(haUiT(HaUiTextEventApStopped));
     ENGINE_UNLOCK();
     stopPortalTransport();
     return true;
@@ -874,7 +881,7 @@ void haHostSelectGame(uint8_t game) {
     engine.selectGame(game);
     haHost.activeGame = game;
     if(game != HA_GAME_NONE) haHostGamePlayed(game);
-    haHostLog("game changed");
+    haHostLog(haUiT(HaUiTextEventGameChanged));
     haPersistenceMarkDirty();
     ENGINE_UNLOCK();
 }
@@ -893,7 +900,7 @@ bool haHostResetScores(bool discardOnArchiveFailure) {
 void haHostRoundEnd() {
     ENGINE_LOCK();
     engine.roundEnd();
-    haHostLog("round ended");
+    haHostLog(haUiT(HaUiTextEventRoundEnded));
     ENGINE_UNLOCK();
 }
 
@@ -927,7 +934,7 @@ void haHostApplySsid(const char* ssid) {
     bool renameAllowed = false;
     ENGINE_LOCK();
     renameAllowed = haApSsidRenameAllowed(haApState);
-    if(!renameAllowed) haHostSetEvent("resume AP before SSID rename");
+    if(!renameAllowed) haHostSetEvent(haUiT(HaUiTextEventResumeApBeforeRename));
     ENGINE_UNLOCK();
     if(!renameAllowed) {
         Serial.println("[ha] refusing SSID rename during reconnect wait");
@@ -1399,7 +1406,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
 
     if(!haPersistence.usingSd && havePlayers && !discardOnArchiveFailure) {
         ENGINE_LOCK();
-        haHostLog("archive unavailable");
+        haHostLog(haUiT(HaUiTextEventArchiveUnavailable));
         ENGINE_UNLOCK();
         haPersistenceEndTransaction();
         return false;
@@ -1411,7 +1418,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
                 startWithoutArchive = true;
             } else {
                 ENGINE_LOCK();
-                haHostLog("archive failed");
+                haHostLog(haUiT(HaUiTextEventArchiveFailed));
                 haPersistenceMarkDirty();
                 ENGINE_UNLOCK();
                 haPersistenceEndTransaction();
@@ -1422,7 +1429,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
         }
         if(startWithoutArchive) {
             ENGINE_LOCK();
-            haHostLog("archive skipped by host");
+            haHostLog(haUiT(HaUiTextEventArchiveSkipped));
             ENGINE_UNLOCK();
         }
     } else if(haPersistence.usingSd && !havePlayers) {
@@ -1433,7 +1440,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
         if(haActiveNvsLatestGeneration(currentGeneration) &&
            currentGeneration == UINT32_MAX) {
             ENGINE_LOCK();
-            haHostLog("generation exhausted");
+            haHostLog(haUiT(HaUiTextEventGenerationExhausted));
             ENGINE_UNLOCK();
             haPersistenceEndTransaction();
             return false;
@@ -1441,7 +1448,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
         uint32_t next = haPersistenceReserveSessionNumber(haPersistence.sessionNumber);
         if(!next) {
             ENGINE_LOCK();
-            haHostLog("session id failed");
+            haHostLog(haUiT(HaUiTextEventSessionIdFailed));
             ENGINE_UNLOCK();
             haPersistenceEndTransaction();
             return false;
@@ -1518,7 +1525,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
         if(!protectedCurrent)
             Serial.println("[ha] new-session rollback could not protect active state");
         ENGINE_LOCK();
-        haHostLog("checkpoint failed");
+        haHostLog(haUiT(HaUiTextEventCheckpointFailed));
         haPersistence.dirty = !protectedCurrent;
         ENGINE_UNLOCK();
         haPersistenceEndTransaction();
@@ -1528,7 +1535,7 @@ static bool haPersistenceStartNewSession(bool discardOnArchiveFailure) {
     ENGINE_LOCK();
     engine.resetScores();
     haHostResetSessionScores();
-    haHostLog("new session");
+    haHostLog(haUiT(HaUiTextEventNewSession));
     haPersistence.dirty = false;
     ENGINE_UNLOCK();
     haPersistenceEndTransaction();
@@ -1578,7 +1585,7 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
                                       true);
             if(!protectedInNvs) {
                 ENGINE_LOCK();
-                haHostLog("restore storage failed");
+                haHostLog(haUiT(HaUiTextEventRestoreStorageFailed));
                 haPersistenceMarkDirty();
                 ENGINE_UNLOCK();
             }
@@ -1610,7 +1617,7 @@ static bool haPersistenceRestoreHistory(const HaHistSession& session) {
     haApReconnectStartedMs = 0;
     haApReconnectExpiryApplied = false;
     haApState = haApStateAfterHistoryRestore(portalRunning);
-    haHostLog("history restored");
+    haHostLog(haUiT(HaUiTextEventHistoryRestored));
     haPersistence.dirty = false;
     ENGINE_UNLOCK();
     haPersistenceEndTransaction();
@@ -1730,7 +1737,7 @@ void setup() {
         // Setup work and first-start storage I/O are not game time. AP startup
         // resumes this clock only after the AP/DNS/HTTP transport is ready.
         engine.transportPause(millis());
-        haHostLog("packs loaded");
+        haHostLog(haUiT(HaUiTextEventPacksLoaded));
     }
     ENGINE_UNLOCK();
     if(!contentReady) haStartupFatal("content packs");
@@ -1780,12 +1787,12 @@ void loop() {
             snprintf(
                 event,
                 sizeof(event),
-                "language: %s",
+                haUiT(HaUiTextEventLanguageFormat),
                 HA_LANG_NAME[requestedLang % HA_LANG_COUNT]);
             haHostLog(event);
         } else {
             // The staged loader retains the previous content/language on failure.
-            haHostLog("language load failed");
+            haHostLog(haUiT(HaUiTextEventLanguageLoadFailed));
         }
         ENGINE_UNLOCK();
         if(!contentReady) {

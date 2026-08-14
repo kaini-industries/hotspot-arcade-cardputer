@@ -7,6 +7,8 @@
 #define HA_MAX_PLAYERS 10
 #include "ha_host.h"
 
+uint8_t haLang = 0;
+
 static void identityFor(uint32_t value, char out[HA_CLIENT_ID_LEN]) {
     int length = std::snprintf(
         out,
@@ -84,9 +86,37 @@ static void testImportAndSparsePlayCounts() {
     assert(haHost.activeGame == HA_GAME_CHESS);
 }
 
+static void testEventRingCapacityAndLocalizedPresenceEvents() {
+    static_assert(HA_EV_MAX == 24, "the Cardputer event console must retain 24 entries");
+    haHostReset();
+    haHost.evTotal = 0;
+    for(unsigned i = 0; i < 30; i++) {
+        char event[HA_EV_LEN];
+        std::snprintf(event, sizeof(event), "EVENT %02u", i);
+        haHostLog(event);
+    }
+    assert(haHost.evTotal == 30);
+    for(unsigned i = 6; i < 30; i++) {
+        char expected[HA_EV_LEN];
+        std::snprintf(expected, sizeof(expected), "EVENT %02u", i);
+        assert(std::strcmp(haHost.ev[i % HA_EV_MAX], expected) == 0);
+    }
+
+    for(size_t i = 0; i < HA_GENERATED_LANGUAGE_COUNT; i++)
+        if(std::strcmp(HA_GENERATED_LANGUAGES[i].code, "de") == 0) haLang = (uint8_t)i;
+    char identity[HA_CLIENT_ID_LEN];
+    identityFor(77, identity);
+    assert(haHostJoinStable(1, identity, "NOVA", "N"));
+    assert(std::strcmp(haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX], "DA NOVA") == 0);
+    haHostLeave(1);
+    assert(std::strcmp(haHost.ev[(haHost.evTotal - 1) % HA_EV_MAX], "WEG NOVA") == 0);
+    haLang = 0;
+}
+
 int main() {
     testStableReconnectAndSaturatingScores();
     testBoundedLedgerAdmission();
     testImportAndSparsePlayCounts();
+    testEventRingCapacityAndLocalizedPresenceEvents();
     std::cout << "native cumulative-ledger tests passed\n";
 }

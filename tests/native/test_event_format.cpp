@@ -24,6 +24,22 @@ static void expect(
     assert(std::strcmp(output, expected) == 0);
 }
 
+static void expectGerman(uint8_t kind, const char* expected, int16_t value = 0) {
+    char output[96];
+    HaHostEventDisposition disposition = haFormatHostEvent(
+        kind,
+        "Schach",
+        "NOVA",
+        "ORBIT",
+        value,
+        "",
+        output,
+        sizeof(output),
+        HaUiGerman);
+    assert(disposition == HaHostEventStatus);
+    assert(std::strcmp(output, expected) == 0);
+}
+
 int main() {
     expect(HA_HOST_EVT_MATCH_STARTED, "Chess: NOVA vs ORBIT", HaHostEventStatus);
     expect(HA_HOST_EVT_CHAT, "NOVA: hello", HaHostEventLog, 0, "hello");
@@ -34,6 +50,12 @@ int main() {
     expect(HA_HOST_EVT_ROUND_DRAW, "Chess: NOVA / ORBIT draw (stalemate)", HaHostEventStatus, 0, "stalemate");
     expect(HA_HOST_EVT_ROUND_COMPLETE, "Chess: round 7 complete", HaHostEventStatus, 7);
     expect(HA_HOST_EVT_GAME_FINAL, "Chess: game complete", HaHostEventStatus);
+
+    expectGerman(HA_HOST_EVT_MATCH_STARTED, "Schach: NOVA gegen ORBIT");
+    expectGerman(HA_HOST_EVT_ROUND_WIN, "Schach: NOVA besiegt ORBIT");
+    expectGerman(HA_HOST_EVT_ROUND_DRAW, "Schach: NOVA / ORBIT unentschieden");
+    expectGerman(HA_HOST_EVT_ROUND_COMPLETE, "Schach: Runde 7 beendet", 7);
+    expectGerman(HA_HOST_EVT_GAME_FINAL, "Schach: Spiel beendet");
 
     char tiny[8];
     assert(haFormatHostEvent(
